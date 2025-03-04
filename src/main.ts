@@ -1,4 +1,5 @@
 import { SplatCloud } from "./splatcloud";
+import { mat4, vec3 } from "gl-matrix";
 
 const canvas = document.getElementById("webgpu-canvas") as HTMLCanvasElement;
 const devicePixelRatio = window.devicePixelRatio;
@@ -7,7 +8,7 @@ canvas.height = canvas.clientHeight * devicePixelRatio;
 
 const splatCloud = new SplatCloud();
 
-await splatCloud.readFromFile("data/train.splat");
+await splatCloud.readFromFile("data/nike.splat");
 
 const positions = splatCloud.getPositions();
 
@@ -37,6 +38,55 @@ function computeMinMax(points) {
   return new Float32Array([minX, maxX, minY, maxY, minZ, maxZ]);
 }
 
+let cameraPosition = vec3.fromValues(0, 0, 5);
+const cameraTarget = vec3.fromValues(0, 0, 0);
+const upDirection = vec3.fromValues(0, 1, 0);
+
+function updateViewMatrix() {
+  const viewMatrix = mat4.create();
+  mat4.lookAt(viewMatrix, cameraPosition, cameraTarget, upDirection);
+  return viewMatrix;
+}
+
+function updateUniformBuffer(device, uniformBuffer, viewProjectionMatrix, minMaxValues) {
+  const paddedMinMaxValues = new Float32Array(8);
+  paddedMinMaxValues.set(minMaxValues);
+
+  const uniforms = new Float32Array([
+    ...viewProjectionMatrix,
+    ...paddedMinMaxValues
+  ]);
+
+  device.queue.writeBuffer(uniformBuffer, 0, uniforms);
+}
+
+function handleKeyDown(event) {
+  const moveSpeed = 0.1;
+  switch (event.key) {
+    case 'w':
+      cameraPosition[2] -= moveSpeed;
+      break;
+    case 's':
+      cameraPosition[2] += moveSpeed;
+      break;
+    case 'a':
+      cameraPosition[0] -= moveSpeed;
+      break;
+    case 'd':
+      cameraPosition[0] += moveSpeed;
+      break;
+    case 'q':
+      cameraPosition[1] -= moveSpeed;
+      break;
+    case 'e':
+      cameraPosition[1] += moveSpeed;
+      break;
+  }
+}
+
+// Add event listener for keyboard input
+window.addEventListener('keydown', handleKeyDown);
+
 async function initWebGPU() {
   if (!navigator.gpu) {
       console.error("WebGPU is not supported!");
@@ -57,6 +107,21 @@ async function initWebGPU() {
 }
 
 async function createPipeline(device, format) {
+
+  const pointCloudVertWGSL = await fetch("shaders/pointcloudVertex.wgsl").then(res => res.text());
+  const pointCloudFragWGSL = await fetch("shaders/pointcloudFragment.wgsl").then(res => res.text());
+
+  const pointCloudVertModule = device.createShaderModule({ code: pointCloudVertWGSL });
+  const pointCloudFragModule = device.createShaderModule({ code: pointCloudFragWGSL });
+
+  const viewMatrix = updateViewMatrix();
+  const projectionMatrix = mat4.create();
+
+  mat4.perspective(projectionMatrix, Math.PI / 4, canvas.width / canvas.height, 0.1, 100.0);
+
+  const viewProjectionMatrix = mat4.create();
+  mat4.multiply(viewProjectionMatrix, projectionMatrix, viewMatrix);
+
   const positionBuffer = device.createBuffer({
     size: positions.byteLength,
     usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
@@ -66,19 +131,16 @@ async function createPipeline(device, format) {
   new Float32Array(positionBuffer.getMappedRange()).set(positions);
   positionBuffer.unmap();
 
-  console.log(minMaxValues);
-  console.log(positions);
-  const minMaxBuffer = device.createBuffer({
-    size: minMaxValues.byteLength,
+  const paddedMinMaxValues = new Float32Array(8);
+  paddedMinMaxValues.set(minMaxValues);
+
+  const uniforms = new Float32Array([...viewProjectionMatrix,...paddedMinMaxValues]);
+
+  const uniformBuffer = device.createBuffer({
+    size: uniforms.byteLength,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
   });
-  device.queue.writeBuffer(minMaxBuffer, 0, minMaxValues);
-
-  const pointCloudVertWGSL = await fetch("shaders/pointcloudVertex.wgsl").then(res => res.text());
-  const pointCloudFragWGSL = await fetch("shaders/pointcloudFragment.wgsl").then(res => res.text());
-
-  const pointCloudVertModule = device.createShaderModule({ code: pointCloudVertWGSL });
-  const pointCloudFragModule = device.createShaderModule({ code: pointCloudFragWGSL });
+  device.queue.writeBuffer(uniformBuffer, 0, uniforms);
 
   const bindGroupLayout = device.createBindGroupLayout({
     entries: [{
@@ -92,7 +154,7 @@ async function createPipeline(device, format) {
     layout: bindGroupLayout,
     entries: [{
       binding: 0,
-      resource: { buffer: minMaxBuffer }
+      resource: { buffer: uniformBuffer }
     }]
   });
 
@@ -126,7 +188,7 @@ async function createPipeline(device, format) {
     },
   });
 
-  return { pointCloudPipeline, positionBuffer, minMaxBuffer, bindGroup };
+  return { pointCloudPipeline, positionBuffer, uniformBuffer, bindGroup, projectionMatrix };
 }
 
 async function render() {
@@ -136,9 +198,15 @@ async function render() {
     return;
   }
   const { device, context, format } = webGPU;
-  const { pointCloudPipeline, positionBuffer, minMaxBuffer, bindGroup } = await createPipeline(device, format);
+  const { pointCloudPipeline, positionBuffer, uniformBuffer, bindGroup, projectionMatrix } = await createPipeline(device, format);
 
   function frame() {
+    const viewMatrix = updateViewMatrix();
+    const viewProjMatrix = mat4.create();
+    mat4.multiply(viewProjMatrix, projectionMatrix, viewMatrix);
+
+    updateUniformBuffer(device, uniformBuffer, viewProjMatrix, minMaxValues);
+
     const commandEncoder = device.createCommandEncoder();
     const textureView = context.getCurrentTexture().createView();
 
