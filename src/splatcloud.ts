@@ -80,8 +80,6 @@ export class SplatCloud {
         }
     }
 
-    readFromBuffer
-
     getPositions(): Float32Array {
         const positions = new Float32Array(this.points.length * 3);
         for (let i = 0; i < this.points.length; i++) {
@@ -92,8 +90,8 @@ export class SplatCloud {
         return positions;
     }
 
-    getColors(): Uint8Array {
-        const colors = new Uint8Array(this.points.length * 4);
+    getColors(): Uint32Array {
+        const colors = new Uint32Array(this.points.length * 4);
         for (let i = 0; i < this.points.length; i++) {
             colors[i * 4] = this.points[i].getColor()[0];
             colors[i * 4 + 1] = this.points[i].getColor()[1];

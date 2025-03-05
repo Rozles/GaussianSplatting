@@ -1,4 +1,5 @@
 import { SplatCloud } from "./splatcloud";
+import { Camera } from "./camera";
 import { mat4, vec3 } from "gl-matrix";
 
 const canvas = document.getElementById("webgpu-canvas") as HTMLCanvasElement;
@@ -8,50 +9,40 @@ canvas.height = canvas.clientHeight * devicePixelRatio;
 
 const splatCloud = new SplatCloud();
 
-await splatCloud.readFromFile("data/nike.splat");
+await splatCloud.readFromFile("data/plush.splat");
 
 const positions = splatCloud.getPositions();
+const colors = splatCloud.getColors();
 
 const minMaxValues = computeMinMax(positions);
+const paddedMinMaxValues = new Float32Array(4);
+paddedMinMaxValues.set(minMaxValues);
+paddedMinMaxValues[3] = 0;
+
+const camera = new Camera();
+camera.update();
 
 function computeMinMax(points) {
-  let minX = Number.MAX_VALUE;
-  let maxX = Number.MIN_VALUE;
-  let minY = Number.MAX_VALUE;
-  let maxY = Number.MIN_VALUE;
-  let minZ = Number.MAX_VALUE;
-  let maxZ = Number.MIN_VALUE;
+  let min = Number.MAX_VALUE;
+  let max = Number.MIN_VALUE;
 
   let num_vectors = points.length / 3;
   for (let i = 0; i < num_vectors; i++) { 
     let x = points[i * 3];
     let y = points[i * 3 + 1];
     let z = points[i * 3 + 2];
-    if (x < minX) minX = x;
-    if (x > maxX) maxX = x;
-    if (y < minY) minY = y;
-    if (y > maxY) maxY = y;
-    if (z < minZ) minZ = z;
-    if (z > maxZ) maxZ = z;
+    if (x < min) min = x;
+    if (x > max) max = x;
+    if (y < min) min = y;
+    if (y > max) max = y;
+    if (z < min) min = z;
+    if (z > max) max = z;
   }
 
-  return new Float32Array([minX, maxX, minY, maxY, minZ, maxZ]);
+  return new Float32Array([min, max]);
 }
 
-let cameraPosition = vec3.fromValues(0, 0, 5);
-const cameraTarget = vec3.fromValues(0, 0, 0);
-const upDirection = vec3.fromValues(0, 1, 0);
-
-function updateViewMatrix() {
-  const viewMatrix = mat4.create();
-  mat4.lookAt(viewMatrix, cameraPosition, cameraTarget, upDirection);
-  return viewMatrix;
-}
-
-function updateUniformBuffer(device, uniformBuffer, viewProjectionMatrix, minMaxValues) {
-  const paddedMinMaxValues = new Float32Array(8);
-  paddedMinMaxValues.set(minMaxValues);
-
+function updateUniformBuffer(device, uniformBuffer, viewProjectionMatrix: mat4) {
   const uniforms = new Float32Array([
     ...viewProjectionMatrix,
     ...paddedMinMaxValues
@@ -60,31 +51,68 @@ function updateUniformBuffer(device, uniformBuffer, viewProjectionMatrix, minMax
   device.queue.writeBuffer(uniformBuffer, 0, uniforms);
 }
 
+let mouseDown = false;
+let lastMouseX = 0;
+let lastMouseY = 0;
+
+function handleMouseDown(event) {
+  mouseDown = true;
+  lastMouseX = event.clientX;
+  lastMouseY = event.clientY;
+}
+
+function handleMouseUp(event) {
+  mouseDown = false;
+}
+
+function handleMouseMove(event) {
+  if (mouseDown) {
+    const deltaX = event.clientX - lastMouseX;
+    const deltaY = event.clientY - lastMouseY;
+    lastMouseX = event.clientX;
+    lastMouseY = event.clientY;
+
+    const sensitivity = 0.005;
+    const yaw = deltaX * sensitivity;
+    const pitch = deltaY * sensitivity;
+
+    camera.rotateYaw(-yaw);
+    camera.rotatePitch(pitch);
+  }
+}
+
 function handleKeyDown(event) {
-  const moveSpeed = 0.1;
+  console.log(event.key);
+  const step = 0.25;
   switch (event.key) {
     case 'w':
-      cameraPosition[2] -= moveSpeed;
+    case 'ArrowUp':
+      camera.moveForward(step);
       break;
     case 's':
-      cameraPosition[2] += moveSpeed;
+    case 'ArrowDown':
+      camera.moveBackward(step);
       break;
     case 'a':
-      cameraPosition[0] -= moveSpeed;
+    case 'ArrowLeft':
+      camera.moveLeft(step);
       break;
     case 'd':
-      cameraPosition[0] += moveSpeed;
+    case 'ArrowRight':
+      camera.moveRight(step);
       break;
-    case 'q':
-      cameraPosition[1] -= moveSpeed;
+    case 'Shift':
+      camera.moveDown(step);
       break;
-    case 'e':
-      cameraPosition[1] += moveSpeed;
+    case ' ':
+      camera.moveUp(step);
       break;
   }
 }
 
-// Add event listener for keyboard input
+window.addEventListener('mousemove', handleMouseMove);
+window.addEventListener('mousedown', handleMouseDown);
+window.addEventListener('mouseup', handleMouseUp);
 window.addEventListener('keydown', handleKeyDown);
 
 async function initWebGPU() {
@@ -114,7 +142,7 @@ async function createPipeline(device, format) {
   const pointCloudVertModule = device.createShaderModule({ code: pointCloudVertWGSL });
   const pointCloudFragModule = device.createShaderModule({ code: pointCloudFragWGSL });
 
-  const viewMatrix = updateViewMatrix();
+  const viewMatrix = camera.getViewMatrix();
   const projectionMatrix = mat4.create();
 
   mat4.perspective(projectionMatrix, Math.PI / 4, canvas.width / canvas.height, 0.1, 100.0);
@@ -127,12 +155,16 @@ async function createPipeline(device, format) {
     usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
     mappedAtCreation: true,
   });
-
   new Float32Array(positionBuffer.getMappedRange()).set(positions);
   positionBuffer.unmap();
 
-  const paddedMinMaxValues = new Float32Array(8);
-  paddedMinMaxValues.set(minMaxValues);
+  const colorBuffer = device.createBuffer({
+    size: colors.byteLength,
+    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+    mappedAtCreation: true,
+  });
+  new Int32Array(colorBuffer.getMappedRange()).set(colors);
+  colorBuffer.unmap();
 
   const uniforms = new Float32Array([...viewProjectionMatrix,...paddedMinMaxValues]);
 
@@ -167,14 +199,24 @@ async function createPipeline(device, format) {
     vertex: {
       module: pointCloudVertModule,
       entryPoint: 'main',
-      buffers: [{
-        arrayStride: 3 * 4,
-        attributes: [{
-          shaderLocation: 0,
-          offset: 0,
-          format: 'float32x3',
-        }],
-      }],
+      buffers: [
+        {
+          arrayStride: 3 * 4,
+          attributes: [{
+            shaderLocation: 0,
+            offset: 0,
+            format: 'float32x3',
+          }],
+        },
+        {
+          arrayStride: 4 * 4,
+          attributes: [{
+            shaderLocation: 1,
+            offset: 0,
+            format: 'uint32x4',
+          }],
+        }
+      ],
     },
     fragment: {
       module: pointCloudFragModule,
@@ -188,7 +230,7 @@ async function createPipeline(device, format) {
     },
   });
 
-  return { pointCloudPipeline, positionBuffer, uniformBuffer, bindGroup, projectionMatrix };
+  return { pointCloudPipeline, positionBuffer, colorBuffer, uniformBuffer, bindGroup, projectionMatrix };
 }
 
 async function render() {
@@ -198,14 +240,14 @@ async function render() {
     return;
   }
   const { device, context, format } = webGPU;
-  const { pointCloudPipeline, positionBuffer, uniformBuffer, bindGroup, projectionMatrix } = await createPipeline(device, format);
+  const { pointCloudPipeline, positionBuffer, colorBuffer, uniformBuffer, bindGroup, projectionMatrix } = await createPipeline(device, format);
 
   function frame() {
-    const viewMatrix = updateViewMatrix();
+    const viewMatrix = camera.getViewMatrix();
     const viewProjMatrix = mat4.create();
     mat4.multiply(viewProjMatrix, projectionMatrix, viewMatrix);
 
-    updateUniformBuffer(device, uniformBuffer, viewProjMatrix, minMaxValues);
+    updateUniformBuffer(device, uniformBuffer, viewProjMatrix);
 
     const commandEncoder = device.createCommandEncoder();
     const textureView = context.getCurrentTexture().createView();
@@ -221,6 +263,7 @@ async function render() {
 
     renderPass.setPipeline(pointCloudPipeline);
     renderPass.setVertexBuffer(0, positionBuffer);
+    renderPass.setVertexBuffer(1, colorBuffer);
     renderPass.setBindGroup(0, bindGroup);
     renderPass.draw(positions.length / 3); // Number of points
     renderPass.end();
