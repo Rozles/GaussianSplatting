@@ -83,7 +83,11 @@ export class Camera {
     }
 
     moveUp(distance: number) {
-        vec3.scaleAndAdd(this.position, this.position, this.up, distance);
+        let upVec = vec3.create();
+        vec3.cross(upVec, this.forwardVec, this.up);
+        vec3.cross(upVec, upVec, this.forwardVec);
+        vec3.normalize(upVec, upVec);
+        vec3.scaleAndAdd(this.position, this.position, upVec, distance);
 
         this.update();
     }

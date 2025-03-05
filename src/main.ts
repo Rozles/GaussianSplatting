@@ -3,14 +3,9 @@ import { Camera } from "./camera";
 import { mat4, vec3 } from "gl-matrix";
 
 const canvas = document.getElementById("webgpu-canvas") as HTMLCanvasElement;
-const devicePixelRatio = window.devicePixelRatio;
-canvas.width = canvas.clientWidth * devicePixelRatio;
-canvas.height = canvas.clientHeight * devicePixelRatio;
 
 const splatCloud = new SplatCloud();
-
-await splatCloud.readFromFile("data/plush.splat");
-
+await splatCloud.readFromFile("data/nike.splat");
 const positions = splatCloud.getPositions();
 const colors = splatCloud.getColors();
 
@@ -21,6 +16,110 @@ paddedMinMaxValues[3] = 0;
 
 const camera = new Camera();
 camera.update();
+
+const fpsOverlay = document.getElementById("overlay");
+let fpsTimer = performance.now();
+let frameCount = 0;
+let frameTimer = performance.now();
+
+let mouseDown = false;
+let lastMouseX = 0;
+let lastMouseY = 0;
+let mouseX = 0;
+let mouseY = 0;
+let pressedKeys = new Set<string>();
+
+window.addEventListener('mousemove', handleMouseMove);
+window.addEventListener('mousedown', handleMouseDown);
+window.addEventListener('mouseup', handleMouseUp);
+window.addEventListener('keydown', handleKeyDown);
+window.addEventListener('keyup', handleKeyUp);
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+function updateFPS() {
+  const currentTime = performance.now();
+  frameCount++;
+  if (currentTime - fpsTimer >= 1000) {
+    if (fpsOverlay)
+      fpsOverlay.textContent = frameCount.toString();
+    frameCount = 0;
+    fpsTimer = currentTime;
+  }
+}
+
+function handleMouseDown(event) {
+  mouseDown = true;
+  lastMouseX = event.clientX;
+  lastMouseY = event.clientY;
+}
+
+function handleMouseUp(event) {
+  mouseDown = false;
+}
+
+function handleMouseMove(event) {
+  mouseX = event.clientX;
+  mouseY = event.clientY;
+}
+
+function handleKeyDown(event) {
+  pressedKeys.add(event.key);
+}
+
+function handleKeyUp(event) {
+  pressedKeys.delete(event.key);
+}
+
+function updateCamera() {
+  const currentTime = performance.now();
+  const deltaTime = (currentTime - frameTimer) / 1000;
+  frameTimer = currentTime;
+
+  // rotation
+  let deltaX = 0;
+  let deltaY = 0;
+  if (mouseDown) {
+    deltaX = mouseX - lastMouseX;
+    deltaY = mouseY - lastMouseY;
+    lastMouseX = mouseX;
+    lastMouseY = mouseY;
+  }
+
+  const sensitivity = 100 * deltaTime;
+  const yaw = deltaX * sensitivity * deltaTime;
+  const pitch = deltaY * sensitivity * deltaTime;
+
+  camera.rotateYaw(-yaw);
+  camera.rotatePitch(pitch);
+
+  // movement
+  const step = 1 * deltaTime;
+  if (pressedKeys.has('w') || pressedKeys.has('ArrowUp')) {
+    camera.moveForward(step);
+  }
+  if (pressedKeys.has('s') || pressedKeys.has('ArrowDown')) {
+    camera.moveBackward(step);
+  }
+  if (pressedKeys.has('a') || pressedKeys.has('ArrowLeft')) {
+    camera.moveLeft(step);
+  }
+  if (pressedKeys.has('d') || pressedKeys.has('ArrowRight')) {
+    camera.moveRight(step);
+  }
+  if (pressedKeys.has('Shift')) {
+    camera.moveDown(step);
+  }
+  if (pressedKeys.has(' ')) {
+    camera.moveUp(step);
+  }
+}
+
+function resizeCanvas() {
+  const devicePixelRatio = window.devicePixelRatio || 1;
+  canvas.width = canvas.clientWidth * devicePixelRatio;
+  canvas.height = canvas.clientHeight * devicePixelRatio;
+}
 
 function computeMinMax(points) {
   let min = Number.MAX_VALUE;
@@ -50,70 +149,6 @@ function updateUniformBuffer(device, uniformBuffer, viewProjectionMatrix: mat4) 
 
   device.queue.writeBuffer(uniformBuffer, 0, uniforms);
 }
-
-let mouseDown = false;
-let lastMouseX = 0;
-let lastMouseY = 0;
-
-function handleMouseDown(event) {
-  mouseDown = true;
-  lastMouseX = event.clientX;
-  lastMouseY = event.clientY;
-}
-
-function handleMouseUp(event) {
-  mouseDown = false;
-}
-
-function handleMouseMove(event) {
-  if (mouseDown) {
-    const deltaX = event.clientX - lastMouseX;
-    const deltaY = event.clientY - lastMouseY;
-    lastMouseX = event.clientX;
-    lastMouseY = event.clientY;
-
-    const sensitivity = 0.005;
-    const yaw = deltaX * sensitivity;
-    const pitch = deltaY * sensitivity;
-
-    camera.rotateYaw(-yaw);
-    camera.rotatePitch(pitch);
-  }
-}
-
-function handleKeyDown(event) {
-  console.log(event.key);
-  const step = 0.25;
-  switch (event.key) {
-    case 'w':
-    case 'ArrowUp':
-      camera.moveForward(step);
-      break;
-    case 's':
-    case 'ArrowDown':
-      camera.moveBackward(step);
-      break;
-    case 'a':
-    case 'ArrowLeft':
-      camera.moveLeft(step);
-      break;
-    case 'd':
-    case 'ArrowRight':
-      camera.moveRight(step);
-      break;
-    case 'Shift':
-      camera.moveDown(step);
-      break;
-    case ' ':
-      camera.moveUp(step);
-      break;
-  }
-}
-
-window.addEventListener('mousemove', handleMouseMove);
-window.addEventListener('mousedown', handleMouseDown);
-window.addEventListener('mouseup', handleMouseUp);
-window.addEventListener('keydown', handleKeyDown);
 
 async function initWebGPU() {
   if (!navigator.gpu) {
@@ -243,6 +278,9 @@ async function render() {
   const { pointCloudPipeline, positionBuffer, colorBuffer, uniformBuffer, bindGroup, projectionMatrix } = await createPipeline(device, format);
 
   function frame() {
+    updateFPS();
+    updateCamera();
+
     const viewMatrix = camera.getViewMatrix();
     const viewProjMatrix = mat4.create();
     mat4.multiply(viewProjMatrix, projectionMatrix, viewMatrix);
