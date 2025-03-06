@@ -5,19 +5,15 @@ import { mat4, vec3 } from "gl-matrix";
 const canvas = document.getElementById("webgpu-canvas") as HTMLCanvasElement;
 
 const splatCloud = new SplatCloud();
-await splatCloud.readFromFile("data/nike.splat");
+await splatCloud.readFromFile("data/train.splat");
 const positions = splatCloud.getPositions();
 const colors = splatCloud.getColors();
-
-const minMaxValues = computeMinMax(positions);
-const paddedMinMaxValues = new Float32Array(4);
-paddedMinMaxValues.set(minMaxValues);
-paddedMinMaxValues[3] = 0;
 
 const camera = new Camera();
 camera.update();
 
-const fpsOverlay = document.getElementById("overlay");
+const overlay = document.getElementById("overlay");
+const fpsOverlay = document.getElementById("fps");
 let fpsTimer = performance.now();
 let frameCount = 0;
 let frameTimer = performance.now();
@@ -28,6 +24,16 @@ let lastMouseY = 0;
 let mouseX = 0;
 let mouseY = 0;
 let pressedKeys = new Set<string>();
+
+
+const sizeRangeInput = document.getElementById("size") as HTMLInputElement;
+const sizeNumberInput = document.getElementById("size-number") as HTMLInputElement;
+sizeRangeInput.addEventListener("input", () => {
+  sizeNumberInput.value = sizeRangeInput.value;
+});
+sizeNumberInput.addEventListener("input", () => {
+  sizeRangeInput.value = sizeNumberInput.value;
+});
 
 window.addEventListener('mousemove', handleMouseMove);
 window.addEventListener('mousedown', handleMouseDown);
@@ -42,13 +48,17 @@ function updateFPS() {
   frameCount++;
   if (currentTime - fpsTimer >= 1000) {
     if (fpsOverlay)
-      fpsOverlay.textContent = frameCount.toString();
+      fpsOverlay.textContent = 'FPS: ' + frameCount.toString();
     frameCount = 0;
     fpsTimer = currentTime;
   }
 }
 
 function handleMouseDown(event) {
+  if (overlay && overlay.contains(event.target)) {
+    return;
+  }
+
   mouseDown = true;
   lastMouseX = event.clientX;
   lastMouseY = event.clientY;
@@ -121,35 +131,6 @@ function resizeCanvas() {
   canvas.height = canvas.clientHeight * devicePixelRatio;
 }
 
-function computeMinMax(points) {
-  let min = Number.MAX_VALUE;
-  let max = Number.MIN_VALUE;
-
-  let num_vectors = points.length / 3;
-  for (let i = 0; i < num_vectors; i++) { 
-    let x = points[i * 3];
-    let y = points[i * 3 + 1];
-    let z = points[i * 3 + 2];
-    if (x < min) min = x;
-    if (x > max) max = x;
-    if (y < min) min = y;
-    if (y > max) max = y;
-    if (z < min) min = z;
-    if (z > max) max = z;
-  }
-
-  return new Float32Array([min, max]);
-}
-
-function updateUniformBuffer(device, uniformBuffer, viewProjectionMatrix: mat4) {
-  const uniforms = new Float32Array([
-    ...viewProjectionMatrix,
-    ...paddedMinMaxValues
-  ]);
-
-  device.queue.writeBuffer(uniformBuffer, 0, uniforms);
-}
-
 async function initWebGPU() {
   if (!navigator.gpu) {
       console.error("WebGPU is not supported!");
@@ -195,13 +176,11 @@ async function createPipeline(device, format) {
   new Int32Array(colorBuffer.getMappedRange()).set(colors);
   colorBuffer.unmap();
 
-  const uniforms = new Float32Array([...viewProjectionMatrix,...paddedMinMaxValues]);
-
   const uniformBuffer = device.createBuffer({
-    size: uniforms.byteLength,
+    size: viewProjectionMatrix.length * 4,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
   });
-  device.queue.writeBuffer(uniformBuffer, 0, uniforms);
+  device.queue.writeBuffer(uniformBuffer, 0, viewProjectionMatrix);
 
   const bindGroupLayout = device.createBindGroupLayout({
     entries: [{
@@ -277,7 +256,7 @@ async function render() {
 
     const viewProjectionMatrix = camera.getViewProjectionMatrix();
 
-    updateUniformBuffer(device, uniformBuffer, viewProjectionMatrix);
+    device.queue.writeBuffer(uniformBuffer, 0, viewProjectionMatrix);
 
     const commandEncoder = device.createCommandEncoder();
     const textureView = context.getCurrentTexture().createView();
