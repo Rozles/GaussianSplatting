@@ -14,6 +14,7 @@ export class Camera {
     private forwardVec: vec3;
     private up: vec3;
     private viewMatrix: mat4;
+    private perspectiveMatrix: mat4;
 
     constructor() {
         this.position = vec3.create();
@@ -28,11 +29,24 @@ export class Camera {
 
         this.viewMatrix = mat4.create();
 
+        this.perspectiveMatrix = mat4.create();
+        mat4.perspective(this.perspectiveMatrix, Math.PI / 3, 1, 0.1, 100);
+
         this.update();
     }
 
     getViewMatrix(): mat4 {
         return this.viewMatrix;
+    }
+
+    getProjectionMatrix(): mat4 {
+        return this.perspectiveMatrix;
+    }
+
+    getViewProjectionMatrix(): mat4 {
+        let viewProjectionMatrix = mat4.create();
+        mat4.multiply(viewProjectionMatrix, this.perspectiveMatrix, this.viewMatrix);
+        return viewProjectionMatrix;
     }
 
     update() {
@@ -67,8 +81,7 @@ export class Camera {
 
     rotateYaw(radians: number) {
         rotateVectorAroundAxis(this.forwardVec, this.up, radians);
-        console.log (radians);
-        console.log(this.forwardVec);
+
         this.update();
     }
 

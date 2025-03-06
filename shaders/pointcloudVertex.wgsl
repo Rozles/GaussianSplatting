@@ -15,7 +15,7 @@ fn main(@location(0) position: vec3<f32>, @location(1) color: vec4<u32>) -> Vert
     let minVec = vec3<f32>(uniforms.minVal);
     let maxVec = vec3<f32>(uniforms.maxVal);
     let normalized = (position - minVec) / (maxVec - minVec) * 2.0 - 1.0;
-    let pos = vec4<f32>(normalized, 1.0);
+    let pos = vec4<f32>(normalized[0], -normalized[1], normalized[2], 1.0);
     let normalizedColor = vec4<f32>(color.rgba) / 255.0;
     var output: VertexOutput;
     output.position = uniforms.viewProj * pos;

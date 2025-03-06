@@ -86,7 +86,7 @@ function updateCamera() {
     lastMouseY = mouseY;
   }
 
-  const sensitivity = 100 * deltaTime;
+  const sensitivity = 50 * deltaTime;
   const yaw = deltaX * sensitivity * deltaTime;
   const pitch = deltaY * sensitivity * deltaTime;
 
@@ -177,13 +177,7 @@ async function createPipeline(device, format) {
   const pointCloudVertModule = device.createShaderModule({ code: pointCloudVertWGSL });
   const pointCloudFragModule = device.createShaderModule({ code: pointCloudFragWGSL });
 
-  const viewMatrix = camera.getViewMatrix();
-  const projectionMatrix = mat4.create();
-
-  mat4.perspective(projectionMatrix, Math.PI / 4, canvas.width / canvas.height, 0.1, 100.0);
-
-  const viewProjectionMatrix = mat4.create();
-  mat4.multiply(viewProjectionMatrix, projectionMatrix, viewMatrix);
+  const viewProjectionMatrix = camera.getViewProjectionMatrix();
 
   const positionBuffer = device.createBuffer({
     size: positions.byteLength,
@@ -265,7 +259,7 @@ async function createPipeline(device, format) {
     },
   });
 
-  return { pointCloudPipeline, positionBuffer, colorBuffer, uniformBuffer, bindGroup, projectionMatrix };
+  return { pointCloudPipeline, positionBuffer, colorBuffer, uniformBuffer, bindGroup };
 }
 
 async function render() {
@@ -275,17 +269,15 @@ async function render() {
     return;
   }
   const { device, context, format } = webGPU;
-  const { pointCloudPipeline, positionBuffer, colorBuffer, uniformBuffer, bindGroup, projectionMatrix } = await createPipeline(device, format);
+  const { pointCloudPipeline, positionBuffer, colorBuffer, uniformBuffer, bindGroup } = await createPipeline(device, format);
 
   function frame() {
     updateFPS();
     updateCamera();
 
-    const viewMatrix = camera.getViewMatrix();
-    const viewProjMatrix = mat4.create();
-    mat4.multiply(viewProjMatrix, projectionMatrix, viewMatrix);
+    const viewProjectionMatrix = camera.getViewProjectionMatrix();
 
-    updateUniformBuffer(device, uniformBuffer, viewProjMatrix);
+    updateUniformBuffer(device, uniformBuffer, viewProjectionMatrix);
 
     const commandEncoder = device.createCommandEncoder();
     const textureView = context.getCurrentTexture().createView();
