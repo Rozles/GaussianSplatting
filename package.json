@@ -14,5 +14,8 @@
     "fs": "^0.0.1-security",
     "gl-matrix": "^3.4.3",
     "vite": "^6.2.0"
+  },
+  "devDependencies": {
+    "@webgpu/types": "^0.1.55"
   }
 }

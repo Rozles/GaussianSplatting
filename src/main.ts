@@ -1,13 +1,15 @@
-import { SplatCloud } from "./splatcloud";
+import { SplatCloud, loadBinaryFile } from "./splatcloud";
 import { Camera } from "./camera";
 import { mat4, vec3 } from "gl-matrix";
 
 const canvas = document.getElementById("webgpu-canvas") as HTMLCanvasElement;
 
-const splatCloud = new SplatCloud();
-await splatCloud.readFromFile("data/train.splat");
-const positions = splatCloud.getPositions();
-const colors = splatCloud.getColors();
+// const splatCloud = new SplatCloud();
+// await splatCloud.readFromFile("data/train.splat");
+// const positions = splatCloud.getPositions();
+// const colors = splatCloud.getColors();
+
+const pointCloudDataBuffer = await loadBinaryFile("data/nike.splat");
 
 const camera = new Camera();
 camera.update();
@@ -25,15 +27,17 @@ let mouseX = 0;
 let mouseY = 0;
 let pressedKeys = new Set<string>();
 
-
+let pointSize = 1.0;
 const sizeRangeInput = document.getElementById("size") as HTMLInputElement;
 const sizeNumberInput = document.getElementById("size-number") as HTMLInputElement;
 sizeRangeInput.addEventListener("input", () => {
   sizeNumberInput.value = sizeRangeInput.value;
+  pointSize = parseFloat(sizeRangeInput.value);
 });
 sizeNumberInput.addEventListener("input", () => {
   sizeRangeInput.value = sizeNumberInput.value;
-});
+  pointSize = parseFloat(sizeNumberInput.value);
+}); 
 
 window.addEventListener('mousemove', handleMouseMove);
 window.addEventListener('mousedown', handleMouseDown);
@@ -138,8 +142,17 @@ async function initWebGPU() {
   }
   
   const adapter = await navigator.gpu.requestAdapter();
+  if (!adapter) {
+      console.error("Failed to find a GPU adapter");
+      return;
+  }
+
   const device = await adapter.requestDevice();
   const context = canvas.getContext("webgpu");
+  if (!context) {
+      console.error("Failed to create WebGPU context");
+      return;
+  }
 
   const format = navigator.gpu.getPreferredCanvasFormat();
   context.configure({
@@ -150,37 +163,45 @@ async function initWebGPU() {
   return { device, context, format };
 }
 
-async function createPipeline(device, format) {
-
-  const pointCloudVertWGSL = await fetch("shaders/pointcloudVertex.wgsl").then(res => res.text());
-  const pointCloudFragWGSL = await fetch("shaders/pointcloudFragment.wgsl").then(res => res.text());
+async function createPipeline(device: GPUDevice, format: any) {
+  const pointCloudVertWGSL = await fetch("shaders/quadCloudVertex.wgsl").then(res => res.text());
+  const pointCloudFragWGSL = await fetch("shaders/quadCloudFragment.wgsl").then(res => res.text());
 
   const pointCloudVertModule = device.createShaderModule({ code: pointCloudVertWGSL });
   const pointCloudFragModule = device.createShaderModule({ code: pointCloudFragWGSL });
 
-  const viewProjectionMatrix = camera.getViewProjectionMatrix();
+  const viewMatrix = camera.getViewMatrix();
+  const projectionMatrix = camera.getProjectionMatrix();
 
-  const positionBuffer = device.createBuffer({
-    size: positions.byteLength,
+  const vertexBuffer = device.createBuffer({
+    size: pointCloudDataBuffer.byteLength,
     usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
     mappedAtCreation: true,
   });
-  new Float32Array(positionBuffer.getMappedRange()).set(positions);
-  positionBuffer.unmap();
+  new Uint8Array(vertexBuffer.getMappedRange()).set(new Uint8Array(pointCloudDataBuffer));
+  vertexBuffer.unmap();
 
-  const colorBuffer = device.createBuffer({
-    size: colors.byteLength,
-    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-    mappedAtCreation: true,
-  });
-  new Int32Array(colorBuffer.getMappedRange()).set(colors);
-  colorBuffer.unmap();
+  const uniformBufferData = new Float32Array([...viewMatrix, ...projectionMatrix, pointSize]);
+  const uniformBufferDataPadded = new Float32Array(36);
+  uniformBufferDataPadded.set(uniformBufferData);
 
   const uniformBuffer = device.createBuffer({
-    size: viewProjectionMatrix.length * 4,
+    size: uniformBufferDataPadded.byteLength,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
   });
-  device.queue.writeBuffer(uniformBuffer, 0, viewProjectionMatrix);
+  device.queue.writeBuffer(uniformBuffer, 0, uniformBufferDataPadded.buffer);
+
+  const indexData = new Uint32Array([
+    0, 1, 2, 2, 1, 3
+  ]);
+
+  const indexBuffer = device.createBuffer({
+    size: indexData.byteLength,
+    usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
+    mappedAtCreation: true,
+  });
+  new Uint32Array(indexBuffer.getMappedRange()).set(indexData);
+  indexBuffer.unmap();
 
   const bindGroupLayout = device.createBindGroupLayout({
     entries: [{
@@ -209,20 +230,12 @@ async function createPipeline(device, format) {
       entryPoint: 'main',
       buffers: [
         {
-          arrayStride: 3 * 4,
-          attributes: [{
-            shaderLocation: 0,
-            offset: 0,
-            format: 'float32x3',
-          }],
-        },
-        {
-          arrayStride: 4 * 4,
-          attributes: [{
-            shaderLocation: 1,
-            offset: 0,
-            format: 'uint32x4',
-          }],
+          arrayStride: 32,
+          attributes: [
+            {shaderLocation: 0, offset: 0, format: 'float32x3',},
+            {shaderLocation: 1, offset: 12, format: 'float32x3',},
+            {shaderLocation: 2, offset: 24, format: 'uint32',},
+            {shaderLocation: 3, offset: 28, format: 'uint32',}],
         }
       ],
     },
@@ -234,11 +247,11 @@ async function createPipeline(device, format) {
       }],
     },
     primitive: {
-      topology: 'point-list',
+      topology: 'triangle-list',
     },
   });
 
-  return { pointCloudPipeline, positionBuffer, colorBuffer, uniformBuffer, bindGroup };
+  return { pointCloudPipeline, vertexBuffer, indexBuffer, uniformBuffer, bindGroup };
 }
 
 async function render() {
@@ -248,15 +261,16 @@ async function render() {
     return;
   }
   const { device, context, format } = webGPU;
-  const { pointCloudPipeline, positionBuffer, colorBuffer, uniformBuffer, bindGroup } = await createPipeline(device, format);
+  const { pointCloudPipeline, vertexBuffer, indexBuffer, uniformBuffer, bindGroup } = await createPipeline(device, format);
 
   function frame() {
     updateFPS();
     updateCamera();
 
-    const viewProjectionMatrix = camera.getViewProjectionMatrix();
-
-    device.queue.writeBuffer(uniformBuffer, 0, viewProjectionMatrix);
+    const uniformBufferData = new Float32Array([...camera.getViewMatrix(), ...camera.getProjectionMatrix(), pointSize]);
+    const uniformBufferDataPadded = new Float32Array(36);
+    uniformBufferDataPadded.set(uniformBufferData);
+    device.queue.writeBuffer(uniformBuffer, 0, uniformBufferDataPadded.buffer);
 
     const commandEncoder = device.createCommandEncoder();
     const textureView = context.getCurrentTexture().createView();
@@ -271,10 +285,10 @@ async function render() {
     });
 
     renderPass.setPipeline(pointCloudPipeline);
-    renderPass.setVertexBuffer(0, positionBuffer);
-    renderPass.setVertexBuffer(1, colorBuffer);
+    renderPass.setVertexBuffer(0, vertexBuffer);
+    renderPass.setIndexBuffer(indexBuffer, 'uint32');
     renderPass.setBindGroup(0, bindGroup);
-    renderPass.draw(positions.length / 3); // Number of points
+    renderPass.drawIndexed(6, 1, 0, 0, 0);
     renderPass.end();
 
     device.queue.submit([commandEncoder.finish()]);
