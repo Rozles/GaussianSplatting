@@ -8,6 +8,91 @@ function rotateVectorAroundAxis(vector: vec3, axis: vec3, angle: number): vec3 {
     vec3.normalize(vector, vector);
 }
 
+let mouseDown = false;
+let lastMouseX = 0;
+let lastMouseY = 0;
+let mouseX = 0;
+let mouseY = 0;
+let pressedKeys = new Set<string>();
+let frameTimer = performance.now();
+
+window.addEventListener('mousemove', handleMouseMove);
+window.addEventListener('mousedown', handleMouseDown);
+window.addEventListener('mouseup', handleMouseUp);
+window.addEventListener('keydown', handleKeyDown);
+window.addEventListener('keyup', handleKeyUp);
+
+function handleMouseDown(event) {
+  // check if the mouse is inside the canvas
+  if (event.target.tagName === 'CANVAS') {
+  
+    mouseDown = true;
+    lastMouseX = event.clientX;
+    lastMouseY = event.clientY;
+  }
+}
+  
+function handleMouseUp(event) {
+    mouseDown = false;
+}
+
+function handleMouseMove(event) {
+    mouseX = event.clientX;
+    mouseY = event.clientY;
+}
+
+function handleKeyDown(event) {
+    pressedKeys.add(event.key.toLowerCase());
+}
+
+function handleKeyUp(event) {
+    pressedKeys.delete(event.key.toLowerCase());
+}
+
+export function updateCamera(camera: Camera) {
+    const currentTime = performance.now();
+    const deltaTime = (currentTime - frameTimer) / 1000;
+    frameTimer = currentTime;
+  
+    // rotation
+    let deltaX = 0;
+    let deltaY = 0;
+    if (mouseDown) {
+      deltaX = mouseX - lastMouseX;
+      deltaY = mouseY - lastMouseY;
+      lastMouseX = mouseX;
+      lastMouseY = mouseY;
+    }
+  
+    const sensitivity = 1 * deltaTime;
+    const yaw = deltaX * sensitivity;
+    const pitch = deltaY * sensitivity;
+  
+    camera.rotateYaw(-yaw);
+    camera.rotatePitch(pitch);
+  
+    // movement
+    const step = 1 * deltaTime;
+    if (pressedKeys.has('w') || pressedKeys.has('arrowup')) {
+      camera.moveForward(step);
+    }
+    if (pressedKeys.has('s') || pressedKeys.has('arrowdown')) {
+      camera.moveBackward(step);
+    }
+    if (pressedKeys.has('a') || pressedKeys.has('arrowleft')) {
+      camera.moveLeft(step);
+    }
+    if (pressedKeys.has('d') || pressedKeys.has('arrowright')) {
+      camera.moveRight(step);
+    }
+    if (pressedKeys.has('shift')) {
+      camera.moveDown(step);
+    }
+    if (pressedKeys.has(' ')) {
+      camera.moveUp(step);
+    }
+  }
+
 export class Camera {
 
     private position: vec3;

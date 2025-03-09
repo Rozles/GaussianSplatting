@@ -1,28 +1,17 @@
-import { SplatCloud, loadBinaryFile } from "./splatcloud";
-import { Camera } from "./camera";
-import { mat4, vec3 } from "gl-matrix";
+import { loadBinaryFile } from "./utils";
+import { Camera, updateCamera } from "./camera";
 
 const canvas = document.getElementById("webgpu-canvas") as HTMLCanvasElement;
 
-const pointCloudDataBuffer = await loadBinaryFile("data/nike.splat");
+const pointCloudDataBuffer = await loadBinaryFile("data/plush.splat");
 const numberOfPoints = pointCloudDataBuffer.byteLength / 32;
-console.log("Number of points: " + numberOfPoints);
 
 const camera = new Camera();
 camera.update();
 
-const overlay = document.getElementById("overlay");
 const fpsOverlay = document.getElementById("fps");
 let fpsTimer = performance.now();
 let frameCount = 0;
-let frameTimer = performance.now();
-
-let mouseDown = false;
-let lastMouseX = 0;
-let lastMouseY = 0;
-let mouseX = 0;
-let mouseY = 0;
-let pressedKeys = new Set<string>();
 
 let pointSize = 1.0;
 const sizeRangeInput = document.getElementById("size") as HTMLInputElement;
@@ -36,11 +25,6 @@ sizeNumberInput.addEventListener("input", () => {
   pointSize = parseFloat(sizeNumberInput.value);
 }); 
 
-window.addEventListener('mousemove', handleMouseMove);
-window.addEventListener('mousedown', handleMouseDown);
-window.addEventListener('mouseup', handleMouseUp);
-window.addEventListener('keydown', handleKeyDown);
-window.addEventListener('keyup', handleKeyUp);
 window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
 
@@ -52,77 +36,6 @@ function updateFPS() {
       fpsOverlay.textContent = 'FPS: ' + frameCount.toString();
     frameCount = 0;
     fpsTimer = currentTime;
-  }
-}
-
-function handleMouseDown(event) {
-  if (overlay && overlay.contains(event.target)) {
-    return;
-  }
-
-  mouseDown = true;
-  lastMouseX = event.clientX;
-  lastMouseY = event.clientY;
-}
-
-function handleMouseUp(event) {
-  mouseDown = false;
-}
-
-function handleMouseMove(event) {
-  mouseX = event.clientX;
-  mouseY = event.clientY;
-}
-
-function handleKeyDown(event) {
-  pressedKeys.add(event.key.toLowerCase());
-}
-
-function handleKeyUp(event) {
-  pressedKeys.delete(event.key.toLowerCase());
-}
-
-function updateCamera() {
-  const currentTime = performance.now();
-  const deltaTime = (currentTime - frameTimer) / 1000;
-  frameTimer = currentTime;
-
-  // rotation
-  let deltaX = 0;
-  let deltaY = 0;
-  if (mouseDown) {
-    deltaX = mouseX - lastMouseX;
-    deltaY = mouseY - lastMouseY;
-    lastMouseX = mouseX;
-    lastMouseY = mouseY;
-  }
-
-  const sensitivity = 50 * deltaTime;
-  const yaw = deltaX * sensitivity * deltaTime;
-  const pitch = deltaY * sensitivity * deltaTime;
-
-  camera.rotateYaw(-yaw);
-  camera.rotatePitch(pitch);
-
-  // movement
-  const step = 1 * deltaTime;
-  if (pressedKeys.has('w') || pressedKeys.has('arrowup')) {
-    camera.moveForward(step);
-  }
-  if (pressedKeys.has('s') || pressedKeys.has('arrowdown')) {
-    camera.moveBackward(step);
-  }
-  if (pressedKeys.has('a') || pressedKeys.has('arrowleft')) {
-    camera.moveLeft(step);
-  }
-  if (pressedKeys.has('d') || pressedKeys.has('arrowright')) {
-    camera.moveRight(step);
-  }
-  if (pressedKeys.has('shift')) {
-    camera.moveDown(step);
-  }
-  if (pressedKeys.has(' ')) {
-    camera.moveUp(step);
   }
 }
 
@@ -151,21 +64,59 @@ async function initWebGPU() {
       return;
   }
 
-  const format = navigator.gpu.getPreferredCanvasFormat();
+  const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
   context.configure({
       device: device,
-      format: format
+      format: presentationFormat
   });
 
-  return { device, context, format };
+  return { device, context, presentationFormat };
 }
 
-async function createPipeline(device: GPUDevice, format: any) {
+async function createPipeline(device: GPUDevice, presentationFormat: any) {
   const pointCloudVertWGSL = await fetch("shaders/quadCloudVertex.wgsl").then(res => res.text());
   const pointCloudFragWGSL = await fetch("shaders/quadCloudFragment.wgsl").then(res => res.text());
 
   const pointCloudVertModule = device.createShaderModule({ code: pointCloudVertWGSL });
   const pointCloudFragModule = device.createShaderModule({ code: pointCloudFragWGSL });
+
+  const bindGroupLayout = device.createBindGroupLayout({
+    entries: [{
+      binding: 0,
+      visibility: GPUShaderStage.VERTEX,
+      buffer: { type: 'uniform' }
+    }]
+  });
+
+  const pipelineLayout = device.createPipelineLayout({
+    bindGroupLayouts: [bindGroupLayout]
+  });
+
+  const pipeline = device.createRenderPipeline({
+    layout: pipelineLayout,
+    vertex: {
+      module: pointCloudVertModule,
+      entryPoint: 'main',
+      buffers: [
+        {
+          arrayStride: 32,
+          stepMode: 'instance',
+          attributes: [
+            {shaderLocation: 0, offset: 0, format: 'float32x3',},
+            {shaderLocation: 1, offset: 12, format: 'float32x3',},
+            {shaderLocation: 2, offset: 24, format: 'uint32',},
+            {shaderLocation: 3, offset: 28, format: 'uint32',}],
+        }
+      ],
+    },
+    fragment: {
+      module: pointCloudFragModule,
+      entryPoint: 'main',
+      targets: [{
+        format: presentationFormat,
+      }],
+    },
+  });
 
   const vertexBuffer = device.createBuffer({
     size: pointCloudDataBuffer.byteLength,
@@ -180,14 +131,6 @@ async function createPipeline(device: GPUDevice, format: any) {
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
   });
 
-  const bindGroupLayout = device.createBindGroupLayout({
-    entries: [{
-      binding: 0,
-      visibility: GPUShaderStage.VERTEX,
-      buffer: { type: 'uniform' }
-    }]
-  });
-
   const bindGroup = device.createBindGroup({
     layout: bindGroupLayout,
     entries: [{
@@ -196,39 +139,7 @@ async function createPipeline(device: GPUDevice, format: any) {
     }]
   });
 
-  const pipelineLayout = device.createPipelineLayout({
-    bindGroupLayouts: [bindGroupLayout]
-  });
-
-  const pointCloudPipeline = device.createRenderPipeline({
-    layout: pipelineLayout,
-    vertex: {
-      module: pointCloudVertModule,
-      entryPoint: 'main',
-      buffers: [
-        {
-          arrayStride: 32,
-          attributes: [
-            {shaderLocation: 0, offset: 0, format: 'float32x3',},
-            {shaderLocation: 1, offset: 12, format: 'float32x3',},
-            {shaderLocation: 2, offset: 24, format: 'uint32',},
-            {shaderLocation: 3, offset: 28, format: 'uint32',}],
-        }
-      ],
-    },
-    fragment: {
-      module: pointCloudFragModule,
-      entryPoint: 'main',
-      targets: [{
-        format: format,
-      }],
-    },
-    primitive: {
-      topology: 'point-list',
-    },
-  });
-
-  return { pointCloudPipeline, vertexBuffer, uniformBuffer, bindGroup };
+  return { pipeline, vertexBuffer, uniformBuffer, bindGroup };
 }
 
 async function render() {
@@ -237,12 +148,12 @@ async function render() {
     console.error("Failed to initialize WebGPU");
     return;
   }
-  const { device, context, format } = webGPU;
-  const { pointCloudPipeline, vertexBuffer, uniformBuffer, bindGroup } = await createPipeline(device, format);
+  const { device, context, presentationFormat } = webGPU;
+  const { pipeline, vertexBuffer, uniformBuffer, bindGroup } = await createPipeline(device, presentationFormat);
 
   function frame() {
     updateFPS();
-    updateCamera();
+    updateCamera(camera);
 
     const commandEncoder = device.createCommandEncoder();
     const canvasTexture = context.getCurrentTexture();
@@ -264,10 +175,10 @@ async function render() {
         }]
     });
 
-    renderPass.setPipeline(pointCloudPipeline);
+    renderPass.setPipeline(pipeline);
     renderPass.setVertexBuffer(0, vertexBuffer);
     renderPass.setBindGroup(0, bindGroup);
-    renderPass.draw(numberOfPoints);
+    renderPass.draw(6, numberOfPoints, 0, 0);
 
     renderPass.end();
 
