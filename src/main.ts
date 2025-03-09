@@ -3,7 +3,7 @@ import { Camera, updateCamera } from "./camera";
 
 const canvas = document.getElementById("webgpu-canvas") as HTMLCanvasElement;
 
-const pointCloudDataBuffer = await loadBinaryFile("data/plush.splat");
+const pointCloudDataBuffer = await loadBinaryFile("data/train.splat");
 const numberOfPoints = pointCloudDataBuffer.byteLength / 32;
 
 const camera = new Camera();
@@ -114,7 +114,24 @@ async function createPipeline(device: GPUDevice, presentationFormat: any) {
       entryPoint: 'main',
       targets: [{
         format: presentationFormat,
+        blend: {
+          color: {
+            srcFactor: 'src-alpha',
+            dstFactor: 'one-minus-src-alpha',
+            operation: 'add',
+          },
+          alpha: {
+            srcFactor: 'one',
+            dstFactor: 'one-minus-src-alpha',
+            operation: 'add',
+          },
+        },
       }],
+    },
+    depthStencil: {
+      format: "depth24plus",
+      depthWriteEnabled: true,
+      depthCompare: "less",
     },
   });
 
@@ -139,7 +156,13 @@ async function createPipeline(device: GPUDevice, presentationFormat: any) {
     }]
   });
 
-  return { pipeline, vertexBuffer, uniformBuffer, bindGroup };
+  const depthTexture = device.createTexture({
+    size: [canvas.width, canvas.height, 1],
+    format: "depth24plus",
+    usage: GPUTextureUsage.RENDER_ATTACHMENT,
+  });
+
+  return { pipeline, vertexBuffer, uniformBuffer, bindGroup, depthTexture };
 }
 
 async function render() {
@@ -149,7 +172,7 @@ async function render() {
     return;
   }
   const { device, context, presentationFormat } = webGPU;
-  const { pipeline, vertexBuffer, uniformBuffer, bindGroup } = await createPipeline(device, presentationFormat);
+  const { pipeline, vertexBuffer, uniformBuffer, bindGroup, depthTexture } = await createPipeline(device, presentationFormat);
 
   function frame() {
     updateFPS();
@@ -170,9 +193,15 @@ async function render() {
         colorAttachments: [{
             view: textureView,
             loadOp: "clear",
-            clearValue: [0, 0, 0, 1],
+            clearValue: [1, 1, 1, 1],
             storeOp: "store"
-        }]
+        }],
+        depthStencilAttachment: {
+          view: depthTexture.createView(),
+          depthLoadOp: "clear",
+          depthClearValue: 1.0,
+          depthStoreOp: "store",
+        }
     });
 
     renderPass.setPipeline(pipeline);
