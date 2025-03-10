@@ -3,7 +3,7 @@ import { Camera, updateCamera } from "./camera";
 
 const canvas = document.getElementById("webgpu-canvas") as HTMLCanvasElement;
 
-const pointCloudDataBuffer = await loadBinaryFile("data/train.splat");
+const pointCloudDataBuffer = await loadBinaryFile("data/nike.splat");
 const numberOfPoints = pointCloudDataBuffer.byteLength / 32;
 
 const camera = new Camera();
