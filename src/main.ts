@@ -3,12 +3,15 @@ import { Camera, updateCamera } from "./camera";
 
 const canvas = document.getElementById("webgpu-canvas") as HTMLCanvasElement;
 
-const pointCloudDataBuffer = await loadBinaryFile("data/nike.splat");
-const numberOfPoints = pointCloudDataBuffer.byteLength / 32;
-
-const camera = new Camera();
+let aspect = canvas.width / canvas.height;
+const camera = new Camera(aspect);
 camera.update();
 
+console.log(camera.getViewMatrix());
+console.log(camera.getProjectionMatrix());
+console.log(camera.getViewProjectionMatrix());
+
+// Overlay
 const fpsOverlay = document.getElementById("fps");
 let fpsTimer = performance.now();
 let frameCount = 0;
@@ -25,8 +28,23 @@ sizeNumberInput.addEventListener("input", () => {
   pointSize = parseFloat(sizeNumberInput.value);
 }); 
 
+
+// WebGPU initialization
+const webGPU = await initWebGPU();
+if (!webGPU) {
+  console.error("Failed to initialize WebGPU");
+}
+const { device, context, presentationFormat } = webGPU;
+
+let depthTexture = null;
+
 window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
+
+// Point cloud data
+const pointCloudDataBuffer = await loadBinaryFile("data/nike.splat");
+const numberOfPoints = pointCloudDataBuffer.byteLength / 32;
+
 
 function updateFPS() {
   const currentTime = performance.now();
@@ -43,6 +61,18 @@ function resizeCanvas() {
   const devicePixelRatio = window.devicePixelRatio || 1;
   canvas.width = canvas.clientWidth * devicePixelRatio;
   canvas.height = canvas.clientHeight * devicePixelRatio;
+  aspect = canvas.width / canvas.height;
+
+  camera.setAspect(aspect);
+
+  if (depthTexture) {
+    depthTexture.destroy();
+  }
+  depthTexture = device.createTexture({
+    size: [canvas.width, canvas.height, 1],
+    format: "depth24plus",
+    usage: GPUTextureUsage.RENDER_ATTACHMENT,
+  });
 }
 
 async function initWebGPU() {
@@ -74,8 +104,8 @@ async function initWebGPU() {
 }
 
 async function createPipeline(device: GPUDevice, presentationFormat: any) {
-  const pointCloudVertWGSL = await fetch("shaders/quadCloudVertex.wgsl").then(res => res.text());
-  const pointCloudFragWGSL = await fetch("shaders/quadCloudFragment.wgsl").then(res => res.text());
+  const pointCloudVertWGSL = await fetch("shaders/gaussianSplat.vertex.wgsl").then(res => res.text());
+  const pointCloudFragWGSL = await fetch("shaders/gaussianSplat.frag.wgsl").then(res => res.text());
 
   const pointCloudVertModule = device.createShaderModule({ code: pointCloudVertWGSL });
   const pointCloudFragModule = device.createShaderModule({ code: pointCloudFragWGSL });
@@ -144,7 +174,7 @@ async function createPipeline(device: GPUDevice, presentationFormat: any) {
   vertexBuffer.unmap();
 
   const uniformBuffer = device.createBuffer({
-    size: 80,
+    size: 144,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
   });
 
@@ -156,23 +186,17 @@ async function createPipeline(device: GPUDevice, presentationFormat: any) {
     }]
   });
 
-  const depthTexture = device.createTexture({
+  depthTexture = device.createTexture({
     size: [canvas.width, canvas.height, 1],
     format: "depth24plus",
     usage: GPUTextureUsage.RENDER_ATTACHMENT,
   });
 
-  return { pipeline, vertexBuffer, uniformBuffer, bindGroup, depthTexture };
+  return { pipeline, vertexBuffer, uniformBuffer, bindGroup };
 }
 
 async function render() {
-  const webGPU = await initWebGPU();
-  if (!webGPU) {
-    console.error("Failed to initialize WebGPU");
-    return;
-  }
-  const { device, context, presentationFormat } = webGPU;
-  const { pipeline, vertexBuffer, uniformBuffer, bindGroup, depthTexture } = await createPipeline(device, presentationFormat);
+  const { pipeline, vertexBuffer, uniformBuffer, bindGroup } = await createPipeline(device, presentationFormat);
 
   function frame() {
     updateFPS();
@@ -182,10 +206,11 @@ async function render() {
     const canvasTexture = context.getCurrentTexture();
     const textureView = canvasTexture.createView();
 
-    const paddedUniformBufferData = new Float32Array(20);
-    paddedUniformBufferData.set(camera.getViewProjectionMatrix());
-    paddedUniformBufferData.set([canvasTexture.width, canvasTexture.height], 16);
-    paddedUniformBufferData.set([pointSize, 0], 16 + 2);
+    const paddedUniformBufferData = new Float32Array(36);
+    paddedUniformBufferData.set(camera.getViewMatrix());
+    paddedUniformBufferData.set(camera.getProjectionMatrix(), 16);
+    paddedUniformBufferData.set([canvasTexture.width, canvasTexture.height], 32);
+    paddedUniformBufferData.set([pointSize, 0],  34);
 
     device.queue.writeBuffer(uniformBuffer, 0, paddedUniformBufferData.buffer);
 

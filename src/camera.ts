@@ -100,8 +100,9 @@ export class Camera {
     private up: vec3;
     private viewMatrix: mat4;
     private perspectiveMatrix: mat4;
+    private aspect: number;
 
-    constructor() {
+    constructor(aspect: number) {
         this.position = vec3.create();
         this.position[2] = 5;
 
@@ -113,9 +114,10 @@ export class Camera {
         this.up[1] = 1;
 
         this.viewMatrix = mat4.create();
+        this.aspect = aspect;
 
         this.perspectiveMatrix = mat4.create();
-        mat4.perspective(this.perspectiveMatrix, Math.PI / 3, 1, 0.1, 100);
+        mat4.perspective(this.perspectiveMatrix, Math.PI / 3, this.aspect, 0.1, 100);
 
         this.update();
     }
@@ -132,6 +134,11 @@ export class Camera {
         let viewProjectionMatrix = mat4.create();
         mat4.multiply(viewProjectionMatrix, this.perspectiveMatrix, this.viewMatrix);
         return viewProjectionMatrix;
+    }
+
+    setAspect(aspect: number) {
+        this.aspect = aspect;
+        mat4.perspective(this.perspectiveMatrix, Math.PI / 3, this.aspect, 0.1, 100);
     }
 
     update() {
