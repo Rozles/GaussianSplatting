@@ -1,23 +1,33 @@
-fn inverse2x2(m: mat2x2<f32>) -> mat2x2<f32> {
-    let det = m[0][0] * m[1][1] - m[0][1] * m[1][0];
-    return mat2x2<f32>(
-        vec2<f32>(m[1][1] / det, -m[0][1] / det),
-        vec2<f32>(-m[1][0] / det, m[0][0] / det)
-    );
+struct FragmentInput {
+    @location(0) uv: vec2<f32>,
+    @location(1) color: vec4<f32>,
+    @location(2) cov_inv: vec4<f32>,
 }
 
 @fragment
-fn main(@location(0) color: vec4<f32>, 
-        @location(1) sigma1: vec2<f32>,
-        @location(2) sigma2: vec2<f32>,
-        @location(3) uv: vec2<f32>) -> @location(0) vec4<f32> {
-    
-    let sigma: mat2x2<f32> = mat2x2<f32>(
-        vec2<f32>(sigma1),
-        vec2<f32>(sigma2)
+fn main(input: FragmentInput) -> @location(0) vec4<f32> {
+    let pos = input.uv * 2.0 - 1.0; // Convert [0,1] back to [-1,1]
+
+    // Unpack inverse covariance
+    let cov_inv = mat2x2<f32>(
+        vec2<f32>(input.cov_inv.x, input.cov_inv.y),
+        vec2<f32>(input.cov_inv.z, input.cov_inv.w)
     );
 
-    let gaussian = exp(-0.5 * dot(uv, inverse2x2(sigma) * uv));
+    // Evaluate Gaussian: exp(-0.5 * pos^T * cov_inv * pos)
+    let power = -0.5 * dot(pos, cov_inv * pos);
+    
+    // Early discard for efficiency
+    if (power < -10.0) {
+        discard;
+    }
 
-    return vec4<f32>(color.rgb, color.a * gaussian);
+    let alpha = input.color[3] * exp(power);
+
+        // If alpha is too small, discard the fragment
+    if (alpha < 0.01) {
+        discard;
+    }
+    
+    return vec4<f32>(input.color.xyz * alpha, alpha);
 }

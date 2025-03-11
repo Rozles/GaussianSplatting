@@ -202,7 +202,7 @@ async function createPipeline(device: GPUDevice, presentationFormat: any) {
         format: presentationFormat,
         blend: {
           color: {
-            srcFactor: 'src-alpha',
+            srcFactor: 'one',
             dstFactor: 'one-minus-src-alpha',
             operation: 'add',
           },
@@ -216,8 +216,11 @@ async function createPipeline(device: GPUDevice, presentationFormat: any) {
     },
     depthStencil: {
       format: "depth24plus",
-      depthWriteEnabled: true,
+      depthWriteEnabled: false,
       depthCompare: "less",
+    },
+    primitive:{
+      topology: "triangle-list",
     },
   });
 

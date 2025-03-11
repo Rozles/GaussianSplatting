@@ -14,111 +14,176 @@ struct Uniforms {
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
-    @location(0) color: vec4<f32>,
-    @location(1) sigma1: vec2<f32>,
-    @location(2) sigma2: vec2<f32>,
-    @location(3) uv: vec2<f32>,
+    @location(0) uv: vec2<f32>,
+    @location(1) color: vec4<f32>,
+    @location(2) cov_inv: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
 
-fn quaternionToMatrix(q: vec4<f32>) -> mat4x4<f32> {
-    let x = q.x;
-    let y = q.y;
-    let z = q.z;
-    let w = q.w;
-
-    let xx = x * x;
-    let yy = y * y;
-    let zz = z * z;
-    let xy = x * y;
-    let xz = x * z;
-    let yz = y * z;
-    let wx = w * x;
-    let wy = w * y;
-    let wz = w * z;
-
-    return mat4x4<f32>(
-        vec4<f32>(1.0 - 2.0 * (yy + zz), 2.0 * (xy - wz), 2.0 * (xz + wy), 0.0),
-        vec4<f32>(2.0 * (xy + wz), 1.0 - 2.0 * (xx + zz), 2.0 * (yz - wx), 0.0),
-        vec4<f32>(2.0 * (xz - wy), 2.0 * (yz + wx), 1.0 - 2.0 * (xx + yy), 0.0),
-        vec4<f32>(0.0, 0.0, 0.0, 1.0)
+fn quaternion_to_rotation_matrix(q: vec4<f32>) -> mat3x3<f32> {
+    let q_normalized = normalize(q);
+    let x = q_normalized.x;
+    let y = q_normalized.y;
+    let z = q_normalized.z;
+    let w = q_normalized.w;
+    
+    return mat3x3<f32>(
+        vec3<f32>(1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - z * w), 2.0 * (x * z + y * w)),
+        vec3<f32>(2.0 * (x * y + z * w), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - x * w)),
+        vec3<f32>(2.0 * (x * z - y * w), 2.0 * (y * z + x * w), 1.0 - 2.0 * (x * x + y * y))
     );
 }
 
-fn transpose(m: mat4x4<f32>) -> mat4x4<f32> {
-    return mat4x4<f32>(
-        vec4<f32>(m[0][0], m[1][0], m[2][0], m[3][0]),
-        vec4<f32>(m[0][1], m[1][1], m[2][1], m[3][1]),
-        vec4<f32>(m[0][2], m[1][2], m[2][2], m[3][2]),
-        vec4<f32>(m[0][3], m[1][3], m[2][3], m[3][3])
+fn transpose(m: mat3x3<f32>) -> mat3x3<f32> {
+    return mat3x3<f32>(
+        vec3<f32>(m[0][0], m[1][0], m[2][0]),
+        vec3<f32>(m[0][1], m[1][1], m[2][1]),
+        vec3<f32>(m[0][2], m[1][2], m[2][2])
     );
 }
 
-fn transpose2(m: mat2x4<f32>) -> mat4x2<f32> {
-    return mat4x2<f32>(
-        vec2<f32>(m[0][0], m[1][0]),
-        vec2<f32>(m[0][1], m[1][1]),
-        vec2<f32>(m[0][2], m[1][2]),
-        vec2<f32>(m[0][3], m[1][3])
+fn mat2x3_times_mat3x3(a: mat2x3<f32>, b: mat3x3<f32>) -> mat2x3<f32> {
+    let c0 = vec3<f32>(
+        a[0][0] * b[0][0] + a[0][1] * b[1][0] + a[0][2] * b[2][0],
+        a[0][0] * b[0][1] + a[0][1] * b[1][1] + a[0][2] * b[2][1],
+        a[0][0] * b[0][2] + a[0][1] * b[1][2] + a[0][2] * b[2][2]
     );
+    
+    let c1 = vec3<f32>(
+        a[1][0] * b[0][0] + a[1][1] * b[1][0] + a[1][2] * b[2][0],
+        a[1][0] * b[0][1] + a[1][1] * b[1][1] + a[1][2] * b[2][1],
+        a[1][0] * b[0][2] + a[1][1] * b[1][2] + a[1][2] * b[2][2]
+    );
+    
+    return mat2x3<f32>(c0, c1);
+}
+
+fn mat2x3_times_transpose_mat2x3(a: mat2x3<f32>, b: mat2x3<f32>) -> mat2x2<f32> {
+    return mat2x2<f32>(
+        vec2<f32>(
+            dot(a[0], b[0]),
+            dot(a[0], b[1])
+        ),
+        vec2<f32>(
+            dot(a[1], b[0]),
+            dot(a[1], b[1])
+        )
+    );
+}
+
+fn build_covariance_3d(scale: vec3<f32>, q: vec4<f32>) -> mat3x3<f32> {
+    let rot = quaternion_to_rotation_matrix(q);
+    
+    let S_squared = mat3x3<f32>(
+        vec3<f32>(scale.x * scale.x, 0.0, 0.0),
+        vec3<f32>(0.0, scale.y * scale.y, 0.0),
+        vec3<f32>(0.0, 0.0, scale.z * scale.z)
+    );
+    
+    return rot * S_squared * transpose(rot);
+}
+
+fn compute_jacobian(position_camera: vec3<f32>) -> mat2x3<f32> {
+    // Jacobian of perspective projection at the camera-space position
+    // For a typical perspective projection: x' = x/z, y' = y/z
+    
+    let z_inv = 1.0 / position_camera.z;
+    let z_inv_sq = z_inv * z_inv;
+    
+    // First row: partial derivatives of x' = x/z with respect to x,y,z
+    let j1 = vec3<f32>(z_inv, 0.0, -position_camera.x * z_inv_sq);
+    
+    // Second row: partial derivatives of y' = y/z with respect to x,y,z
+    let j2 = vec3<f32>(0.0, z_inv, -position_camera.y * z_inv_sq);
+    
+    return mat2x3<f32>(j1, j2);
 }
 
 @vertex
 fn main(splat: Splat, @builtin(vertex_index) index: u32) -> VertexOutput {
-    let quadVertices = array<vec2<f32>, 6>(
-        vec2<f32>(-1.0, -1.0),
-        vec2<f32>( 1.0, -1.0),
-        vec2<f32>(-1.0,  1.0),
-        vec2<f32>(-1.0,  1.0),
-        vec2<f32>( 1.0, -1.0),
-        vec2<f32>( 1.0,  1.0),
-    );
+    let world_pos = vec4<f32>(splat.position.x, -splat.position.y, splat.position.z, 1.0);
+    let camera_pos = uniforms.view * world_pos;
 
-    let quadVertex = quadVertices[index];
-    let worldPos = vec4<f32>(splat.position.x, -splat.position.y, splat.position.z, 1.0);
-    let clipPos = uniforms.projection * uniforms.view * worldPos;
-    let vertexPos = vec4<f32>(quadVertex * 2 * uniforms.size / uniforms.resolution, 0, 0);
-
-    let rotationQuat = vec4<f32>(
+    let rot_quat = vec4<f32>(
         f32(((splat.rotation >> 0) & 0xFF) - 128) / 128.0,
         f32(((splat.rotation >> 8) & 0xFF) - 128) / 128.0,
         f32(((splat.rotation >> 16) & 0xFF) - 128) / 128.0,
         f32(((splat.rotation >> 24) & 0xFF) - 128) / 128.0,
     );
+
+    let cov_3d_world = build_covariance_3d(splat.scale, rot_quat);
+
+    let view_rotation = mat3x3<f32>(
+        uniforms.view[0].xyz,
+        uniforms.view[1].xyz,
+        uniforms.view[2].xyz
+    );
     
-    let rotation = quaternionToMatrix(rotationQuat);
-    let scale = mat4x4<f32>(
-        splat.scale.x, 0.0, 0.0, 0.0,
-        0.0, splat.scale.y, 0.0, 0.0,
-        0.0, 0.0, splat.scale.z, 0.0,
-        0.0, 0.0, 0.0, 1.0,
+    let cov_3d_camera = view_rotation * cov_3d_world * transpose(view_rotation);
+
+    let jacobian = compute_jacobian(camera_pos.xyz);
+
+    //let cov_2d = jacobian * cov_3d_camera * transpose(jacobian);
+    let temp = mat2x3_times_mat3x3(jacobian, cov_3d_camera);
+    let cov_2d = mat2x3_times_transpose_mat2x3(temp, jacobian);
+    
+    let det = cov_2d[0][0] * cov_2d[1][1] - cov_2d[0][1] * cov_2d[1][0];
+    let inv_det = 1.0 / max(det, 1e-6);
+    
+    let cov_2d_inv = mat2x2<f32>(
+        vec2<f32>(cov_2d[1][1] * inv_det, -cov_2d[0][1] * inv_det),
+        vec2<f32>(-cov_2d[1][0] * inv_det, cov_2d[0][0] * inv_det)
+    );
+    
+    let clip_pos = uniforms.projection * camera_pos;
+    let ndc_pos = vec2<f32>(clip_pos.x / clip_pos.w, clip_pos.y / clip_pos.w);
+
+    let mean_val = (cov_2d[0][0] + cov_2d[1][1]) * 0.5;
+    let diff = (cov_2d[0][0] - cov_2d[1][1]) * 0.5;
+    let discriminant = sqrt(diff * diff + cov_2d[0][1] * cov_2d[0][1]);
+    let eigenvalue1 = mean_val + discriminant;
+    let eigenvalue2 = mean_val - discriminant;
+    
+    let radius_x = 3.0 * sqrt(max(eigenvalue1, 0.0)) * uniforms.size;
+    let radius_y = 3.0 * sqrt(max(eigenvalue2, 0.0)) * uniforms.size;
+    
+    // Quad corner based on vertex_idx (0,1,2,0,2,3)
+    let quad_corners = array<vec2<f32>, 4>(
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>(-1.0, 1.0),
+        vec2<f32>(1.0, 1.0),
+        vec2<f32>(1.0, -1.0)
     );
 
-    let sigma = rotation * scale * transpose(scale) * transpose(rotation);
-
-    let jacobian = mat2x4<f32>(
-        vec4<f32>(1.0 / clipPos.w, 0.0, -clipPos.x / clipPos.w, 0.0),
-        vec4<f32>(0.0, 1.0 / clipPos.w, -clipPos.y / clipPos.w, 0.0)
+    // Map 6 vertices to 4 corners (for two triangles)
+    let vertexMap = array<u32, 6>(
+        0u, 1u, 2u,  // First triangle
+        0u, 2u, 3u   // Second triangle
     );
 
-    let umesna = uniforms.view * sigma * transpose(uniforms.view);
-    let sigma2 = transpose2(jacobian) * umesna * jacobian;
-
-    var output: VertexOutput;
-    output.position = clipPos + vertexPos;
-    output.sigma1 = sigma2[0].xy;
-    output.sigma2 = sigma2[1].xy;
-    output.uv = quadVertex;
+    let idx = vertexMap[index % 6u];
+    let corner = quad_corners[idx];
     
+    // Screen position with size
+    let screen_pos = ndc_pos + corner * vec2<f32>(radius_x, radius_y);
+    
+    // Convert to clip space
+    let position_clip = vec4<f32>(screen_pos, 0.0, 1.0);
+
     let normalizedColor = vec4<f32>(
         f32((splat.color >> 0) & 0xFF) / 255.0,
         f32((splat.color >> 8) & 0xFF) / 255.0,
         f32((splat.color >> 16) & 0xFF) / 255.0,
         f32((splat.color >> 24) & 0xFF) / 255.0
     );
+    
+    var output: VertexOutput;
+    output.position = position_clip;
+    output.uv = corner * 0.5 + 0.5; // Map [-1,1] to [0,1]
     output.color = normalizedColor;
-
+    output.cov_inv = vec4<f32>(cov_2d_inv[0][0], cov_2d_inv[0][1], cov_2d_inv[1][0], cov_2d_inv[1][1]);
+    
     return output;
 }
 
