@@ -1,5 +1,6 @@
 import { loadBinaryFile } from "./utils";
 import { Camera, updateCamera } from "./camera";
+import { vec3, mat4 } from "gl-matrix"; 
 
 const canvas = document.getElementById("webgpu-canvas") as HTMLCanvasElement;
 
@@ -7,9 +8,6 @@ let aspect = canvas.width / canvas.height;
 const camera = new Camera(aspect);
 camera.update();
 
-console.log(camera.getViewMatrix());
-console.log(camera.getProjectionMatrix());
-console.log(camera.getViewProjectionMatrix());
 
 // Overlay
 const fpsOverlay = document.getElementById("fps");
@@ -44,6 +42,64 @@ resizeCanvas();
 // Point cloud data
 const pointCloudDataBuffer = await loadBinaryFile("data/nike.splat");
 const numberOfPoints = pointCloudDataBuffer.byteLength / 32;
+
+// TEST
+
+// create position vector from first three floats in buffer
+const position = vec3.fromValues(
+  new Float32Array(pointCloudDataBuffer, 0, 3)[0],
+  new Float32Array(pointCloudDataBuffer, 0, 3)[1],
+  new Float32Array(pointCloudDataBuffer, 0, 3)[2]
+);
+
+// scale from next three
+const scale = vec3.fromValues(
+  new Float32Array(pointCloudDataBuffer, 12, 3)[0],
+  new Float32Array(pointCloudDataBuffer, 12, 3)[1],
+  new Float32Array(pointCloudDataBuffer, 12, 3)[2]
+);
+
+// color from next unsigned int
+const colorBuffer: number = new Uint32Array(pointCloudDataBuffer, 24, 1)[0];
+let color = new Float32Array([
+  ((colorBuffer >> 0) & 0xff) / 255.0,
+  ((colorBuffer >> 8) & 0xff) / 255.0,
+  ((colorBuffer >> 16) & 0xff) / 255.0,
+  ((colorBuffer >> 24) & 0xff) / 255.0,
+]);
+
+// rotation 
+
+const rotBuffer: number = new Uint32Array(pointCloudDataBuffer, 24, 1)[0];
+let rotQuat = new Float32Array([
+  (((rotBuffer >> 0) & 0xff) - 128.0) / 128.0,
+  (((rotBuffer >> 8) & 0xff) - 128.0) / 128.0,
+  (((rotBuffer >> 16) & 0xff) - 128.0) / 128.0,
+  (((rotBuffer >> 24) & 0xff) - 128.0) / 128.0,
+]);
+
+let rotMat = mat4.create();
+mat4.fromQuat(rotMat, rotQuat);
+
+let scaleMat = mat4.create();
+mat4.fromScaling(scaleMat, scale);
+
+// sigma = scaleMat * rotMat * rotMat.T * scaleMat.T
+let sigma = mat4.create();
+let rotMatT = mat4.create();
+mat4.transpose(rotMatT, rotMat);
+mat4.multiply(sigma, scaleMat, rotMat);
+mat4.multiply(sigma, sigma, rotMatT);
+mat4.multiply(sigma, sigma, scaleMat);
+
+
+console.log("position: ", position);
+console.log("scale: ", scale);
+console.log("color: ", color);
+console.log("rotQuat: ", rotQuat);
+console.log("rotMat: ", rotMat);
+console.log("scaleMat: ", scaleMat);
+console.log("sigma: ", sigma);
 
 
 function updateFPS() {

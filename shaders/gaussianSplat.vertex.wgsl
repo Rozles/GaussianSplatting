@@ -102,7 +102,8 @@ fn main(splat: Splat, @builtin(vertex_index) index: u32) -> VertexOutput {
         vec4<f32>(0.0, 1.0 / clipPos.w, -clipPos.y / clipPos.w, 0.0)
     );
 
-    let sigma2 = jacobian * (uniforms.view * sigma * transpose(uniforms.view)) * transpose2(jacobian);
+    let umesna = uniforms.view * sigma * transpose(uniforms.view);
+    let sigma2 = transpose2(jacobian) * umesna * jacobian;
 
     var output: VertexOutput;
     output.position = clipPos + vertexPos;
