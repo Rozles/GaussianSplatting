@@ -112,8 +112,10 @@ fn main(splat: Splat, @builtin(vertex_index) index: u32) -> VertexOutput {
         f32(((splat.rotation >> 24) & 0xFF) - 128) / 128.0,
     );
 
+    // Build the covariance matrix in world space
     let cov_3d_world = build_covariance_3d(splat.scale, rot_quat);
 
+    // Transform the covariance matrix to camera space
     let view_rotation = mat3x3<f32>(
         uniforms.view[0].xyz,
         uniforms.view[1].xyz,
@@ -124,7 +126,6 @@ fn main(splat: Splat, @builtin(vertex_index) index: u32) -> VertexOutput {
 
     let jacobian = compute_jacobian(camera_pos.xyz);
 
-    //let cov_2d = jacobian * cov_3d_camera * transpose(jacobian);
     let temp = mat2x3_times_mat3x3(jacobian, cov_3d_camera);
     let cov_2d = mat2x3_times_transpose_mat2x3(temp, jacobian);
     
@@ -145,31 +146,56 @@ fn main(splat: Splat, @builtin(vertex_index) index: u32) -> VertexOutput {
     let eigenvalue1 = mean_val + discriminant;
     let eigenvalue2 = mean_val - discriminant;
     
-    let radius_x = 3.0 * sqrt(max(eigenvalue1, 0.0)) * uniforms.size;
-    let radius_y = 3.0 * sqrt(max(eigenvalue2, 0.0)) * uniforms.size;
+    // Calculate eigenvectors
+    var eigenvector1: vec2<f32>;
+    var eigenvector2: vec2<f32>;
+    
+    if (abs(cov_2d[0][1]) < 1e-6) {
+        // Matrix is already diagonal
+        if (cov_2d[0][0] >= cov_2d[1][1]) {
+            eigenvector1 = vec2<f32>(1.0, 0.0);
+            eigenvector2 = vec2<f32>(0.0, 1.0);
+        } else {
+            eigenvector1 = vec2<f32>(0.0, 1.0);
+            eigenvector2 = vec2<f32>(1.0, 0.0);
+        }
+    } else {
+        // Calculate first eigenvector
+        let v1_x = eigenvalue1 - cov_2d[1][1];
+        let v1_y = cov_2d[0][1];
+        eigenvector1 = normalize(vec2<f32>(v1_x, v1_y));
+        
+        // Second eigenvector is perpendicular to the first
+        eigenvector2 = vec2<f32>(-eigenvector1.y, eigenvector1.x);
+    }
+    
+    let radius_x = sqrt(max(eigenvalue1, 0.0)) * uniforms.size;
+    let radius_y = sqrt(max(eigenvalue2, 0.0)) * uniforms.size;
     
     // Quad corner based on vertex_idx (0,1,2,0,2,3)
-    let quad_corners = array<vec2<f32>, 4>(
+    let quad_corners = array<vec2<f32>, 6>(
         vec2<f32>(-1.0, -1.0),
         vec2<f32>(-1.0, 1.0),
+        vec2<f32>(1.0, 1.0),
+        vec2<f32>(-1.0, -1.0),
         vec2<f32>(1.0, 1.0),
         vec2<f32>(1.0, -1.0)
     );
 
-    // Map 6 vertices to 4 corners (for two triangles)
-    let vertexMap = array<u32, 6>(
-        0u, 1u, 2u,  // First triangle
-        0u, 2u, 3u   // Second triangle
+    let corner = quad_corners[index];
+
+    let scaled_corner = vec2<f32>(
+        corner.x * radius_x,
+        corner.y * radius_y
     );
 
-    let idx = vertexMap[index % 6u];
-    let corner = quad_corners[idx];
+    let rotated_corner = vec2<f32>(
+        eigenvector1.x * scaled_corner.x + eigenvector2.x * scaled_corner.y,
+        eigenvector1.y * scaled_corner.x + eigenvector2.y * scaled_corner.y
+    );
     
     // Screen position with size
-    let screen_pos = ndc_pos + corner * vec2<f32>(radius_x, radius_y);
-    
-    // Convert to clip space
-    let position_clip = vec4<f32>(screen_pos, 0.0, 1.0);
+    let screen_pos = clip_pos + vec4<f32>(rotated_corner, 0.0, 1.0);
 
     let normalizedColor = vec4<f32>(
         f32((splat.color >> 0) & 0xFF) / 255.0,
@@ -179,7 +205,7 @@ fn main(splat: Splat, @builtin(vertex_index) index: u32) -> VertexOutput {
     );
     
     var output: VertexOutput;
-    output.position = position_clip;
+    output.position = screen_pos;
     output.uv = corner * 0.5 + 0.5; // Map [-1,1] to [0,1]
     output.color = normalizedColor;
     output.cov_inv = vec4<f32>(cov_2d_inv[0][0], cov_2d_inv[0][1], cov_2d_inv[1][0], cov_2d_inv[1][1]);

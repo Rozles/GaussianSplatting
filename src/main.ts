@@ -1,13 +1,12 @@
 import { loadBinaryFile } from "./utils";
 import { Camera, updateCamera } from "./camera";
 import { vec3, mat4 } from "gl-matrix"; 
+import { createAxisGizmoPipeline } from "./gizmo";
 
 const canvas = document.getElementById("webgpu-canvas") as HTMLCanvasElement;
 
 let aspect = canvas.width / canvas.height;
 const camera = new Camera(aspect);
-camera.update();
-
 
 // Overlay
 const fpsOverlay = document.getElementById("fps");
@@ -163,6 +162,10 @@ async function createPipeline(device: GPUDevice, presentationFormat: any) {
   const pointCloudVertWGSL = await fetch("shaders/gaussianSplat.vertex.wgsl").then(res => res.text());
   const pointCloudFragWGSL = await fetch("shaders/gaussianSplat.frag.wgsl").then(res => res.text());
 
+  // const pointCloudVertWGSL = await fetch("shaders/quadCloudVertex.wgsl").then(res => res.text());
+  // const pointCloudFragWGSL = await fetch("shaders/quadCloudFragment.wgsl").then(res => res.text());
+
+
   const pointCloudVertModule = device.createShaderModule({ code: pointCloudVertWGSL });
   const pointCloudFragModule = device.createShaderModule({ code: pointCloudFragWGSL });
 
@@ -256,6 +259,7 @@ async function createPipeline(device: GPUDevice, presentationFormat: any) {
 
 async function render() {
   const { pipeline, vertexBuffer, uniformBuffer, bindGroup } = await createPipeline(device, presentationFormat);
+  const { gizmoPipeline, axisBuffer } = await createAxisGizmoPipeline(device, presentationFormat);
 
   function frame() {
     updateFPS();
@@ -292,6 +296,12 @@ async function render() {
     renderPass.setVertexBuffer(0, vertexBuffer);
     renderPass.setBindGroup(0, bindGroup);
     renderPass.draw(6, numberOfPoints, 0, 0);
+
+    // Render axis gizmo
+    renderPass.setPipeline(gizmoPipeline);
+    renderPass.setVertexBuffer(0, axisBuffer);
+    renderPass.setBindGroup(0, bindGroup); // Reuse the same uniform buffer
+    renderPass.draw(6, 1, 0, 0); // 6 vertices for 3 axes
 
     renderPass.end();
 

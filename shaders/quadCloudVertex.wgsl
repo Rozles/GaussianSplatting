@@ -6,7 +6,8 @@ struct Splat {
 }
 
 struct Uniforms {
-    matrix: mat4x4<f32>,
+    view: mat4x4<f32>,
+    projection: mat4x4<f32>,
     resolution: vec2<f32>,
     size: f32,
 }
@@ -31,7 +32,7 @@ fn main(splat: Splat, @builtin(vertex_index) index: u32) -> VertexOutput {
 
     let quadVertex = quadVertices[index];
     let worldPos = vec4<f32>(splat.position.x, -splat.position.y, splat.position.z, 1.0);
-    let clipPos = uniforms.matrix * worldPos;
+    let clipPos = uniforms.projection * uniforms.view * worldPos;
     let pointPos = vec4f(quadVertex * 2 * uniforms.size / uniforms.resolution, 0, 0);
 
     var output: VertexOutput;
