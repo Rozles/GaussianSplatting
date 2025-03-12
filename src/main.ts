@@ -1,12 +1,63 @@
-import { loadBinaryFile } from "./utils";
-import { Camera, updateCamera } from "./camera";
+import { GaussianCloud, loadBinaryFile, loadGaussianCloud, Gaussian } from "./utils";
+import { Camera, updateCamera, CameraController } from "./camera";
 import { vec3, mat4 } from "gl-matrix"; 
 import { createAxisGizmoPipeline } from "./gizmo";
 
 const canvas = document.getElementById("webgpu-canvas") as HTMLCanvasElement;
 
 let aspect = canvas.width / canvas.height;
-const camera = new Camera(aspect);
+//const camera = new Camera(aspect);
+const camera = new CameraController(aspect);
+let cameraYaw = 0.0;
+let cameraPitch = 0.0;
+const cameraRadius = 5.0;
+
+let sortPoints = false;
+window.addEventListener("keydown", (event) => {
+  let updateCamera = false;
+  switch (event.key) {
+    case "ArrowUp":
+      cameraPitch += Math.PI / 6;
+      if (cameraPitch > Math.PI / 2) cameraPitch = Math.PI / 2;
+      updateCamera = true;
+      break;
+    case "ArrowDown":
+      cameraPitch -= Math.PI / 6;
+      if (cameraPitch < -Math.PI / 2) cameraPitch = -Math.PI / 2;
+      updateCamera = true;
+      break;
+    case "ArrowLeft":
+      cameraYaw -= Math.PI / 6;
+      updateCamera = true;
+      break;
+    case "ArrowRight":
+      cameraYaw += Math.PI / 6;
+      updateCamera = true;
+      break;
+    
+    case "x":
+      sortPoints = true;
+      break;
+  }
+
+  if (updateCamera) {
+
+    let position = vec3.fromValues(
+      cameraRadius * Math.cos(cameraPitch) * Math.sin(cameraYaw),
+      cameraRadius * Math.sin(cameraPitch),
+      cameraRadius * Math.cos(cameraPitch) * Math.cos(cameraYaw)
+    );
+    camera.setPosition(position);
+    let negativePosition = vec3.create();
+    vec3.negate(negativePosition, position);
+    camera.setForwardVec(negativePosition);
+
+    sortPoints = true;
+  }
+});
+
+
+
 
 // Overlay
 const fpsOverlay = document.getElementById("fps");
@@ -104,8 +155,8 @@ async function createPipeline(device: GPUDevice, presentationFormat: any) {
   //const pointCloudVertWGSL = await fetch("shaders/gaussianSplat.vertex.wgsl").then(res => res.text());
   //const pointCloudFragWGSL = await fetch("shaders/gaussianSplat.frag.wgsl").then(res => res.text());
 
-  const pointCloudVertWGSL = await fetch("shaders/quadsVertex.wgsl").then(res => res.text());
-  const pointCloudFragWGSL = await fetch("shaders/quadsFragment.wgsl").then(res => res.text());
+  const pointCloudVertWGSL = await fetch("shaders/gaussianSplat.vertex.wgsl").then(res => res.text());
+  const pointCloudFragWGSL = await fetch("shaders/gaussianSplat.frag.wgsl").then(res => res.text());
 
 
   const pointCloudVertModule = device.createShaderModule({ code: pointCloudVertWGSL });
@@ -170,8 +221,8 @@ async function createPipeline(device: GPUDevice, presentationFormat: any) {
   });
 
   const vertexBuffer = device.createBuffer({
-    size: gaussianCloud.byteLength,
-    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST | GPUBufferUsage.STORAGE,
+    size: numberOfPoints * 32,
+    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
   });
 
   const uniformBuffer = device.createBuffer({
@@ -196,103 +247,60 @@ async function createPipeline(device: GPUDevice, presentationFormat: any) {
   return { pipeline, vertexBuffer, uniformBuffer, bindGroup };
 }
 
-async function createSortingPipeline(device: GPUDevice) {
-  const computeDepthWGSL = await fetch("shaders/computeDepth.wgsl").then(res => res.text());
-  const bitonicSortWGSL = await fetch("shaders/bitonicSort.wgsl").then(res => res.text());
+function sortSplats(vertexBuffer: GPUBuffer) {
+  const startTime = performance.now();
+  const cameraPos = camera.getPosition();
 
-  const computeDepthModule = device.createShaderModule({ code: computeDepthWGSL });
-  const bitonicSortModule = device.createShaderModule({ code: bitonicSortWGSL });
+  const gaussians = new Array(numberOfPoints);
+  const bytesPerSplat = 32;
+  const floatsPerSplat = bytesPerSplat / 4;
   
-  const numPoints = gaussianCloud.byteLength / 32;
-  const depthIndicesBuffer = device.createBuffer({
-    size: numPoints * 4,
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.VERTEX
-  });
+  const floatView = new Float32Array(gaussianCloud.buffer);
   
-  const depthValuesBuffer = device.createBuffer({
-    size: numPoints * 4,
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
-  });
-  
-  const initialIndices = new Uint32Array(numPoints);
-  for (let i = 0; i < numPoints; i++) {
-    initialIndices[i] = i;
+  for (let i = 0; i < numberOfPoints; i++) {
+    const posIdx = i * floatsPerSplat;
+    const x = floatView[posIdx] - cameraPos[0];
+    const y = floatView[posIdx + 1] - cameraPos[1];
+    const z = floatView[posIdx + 2] - cameraPos[2];
+    
+    gaussians[i] = {
+      index: i,
+      distSq: x*x + y*y + z*z
+    };
   }
-  device.queue.writeBuffer(depthIndicesBuffer, 0, initialIndices);
   
-  const sortParamsBuffer = device.createBuffer({
-    size: 16,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
-  });
+  gaussians.sort((a, b) => b.distSq - a.distSq);
   
-  // Create bind group layouts
-  const computeDepthBindGroupLayout = device.createBindGroupLayout({
-    entries: [
-      { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
-      { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
-      { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
-      { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
-    ]
-  });
+  const sortedData = new Uint8Array(gaussianCloud.byteLength);
+  const srcData = new Uint8Array(gaussianCloud.buffer);
   
-  const sortBindGroupLayout = device.createBindGroupLayout({
-    entries: [
-      { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
-      { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
-      { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
-    ]
-  });
+  for (let i = 0; i < numberOfPoints; i++) {
+    const srcOffset = gaussians[i].index * bytesPerSplat;
+    const dstOffset = i * bytesPerSplat;
+    
+    sortedData.set(
+      srcData.subarray(srcOffset, srcOffset + bytesPerSplat), 
+      dstOffset
+    );
+  }
   
-  // Create pipelines
-  const computeDepthPipeline = device.createComputePipeline({
-    layout: device.createPipelineLayout({
-      bindGroupLayouts: [computeDepthBindGroupLayout]
-    }),
-    compute: {
-      module: computeDepthModule,
-      entryPoint: 'main'
-    }
-  });
-  
-  const sortPipeline = device.createComputePipeline({
-    layout: device.createPipelineLayout({
-      bindGroupLayouts: [sortBindGroupLayout]
-    }),
-    compute: {
-      module: bitonicSortModule,
-      entryPoint: 'main'
-    }
-  });
-  
-  return {
-    computeDepthPipeline,
-    sortPipeline,
-    depthIndicesBuffer,
-    depthValuesBuffer,
-    sortParamsBuffer,
-    computeDepthBindGroupLayout,
-    sortBindGroupLayout
-  };
+  device.queue.writeBuffer(vertexBuffer, 0, sortedData);
 }
 
 async function render() {
   const { pipeline, vertexBuffer, uniformBuffer, bindGroup } = await createPipeline(device, presentationFormat);
-  const { gizmoPipeline, axisBuffer } = await createAxisGizmoPipeline(device, presentationFormat);
-  const { 
-    computeDepthPipeline,
-    sortPipeline,
-    depthIndicesBuffer,
-    depthValuesBuffer,
-    sortParamsBuffer,
-    computeDepthBindGroupLayout,
-    sortBindGroupLayout
-  } = await createSortingPipeline(device);
+  //const { gizmoPipeline, axisBuffer } = await createAxisGizmoPipeline(device, presentationFormat);
 
-  device.queue.writeBuffer(vertexBuffer, 0, gaussianCloud.buffer);
+  device.queue.writeBuffer(vertexBuffer, 0, gaussianCloud);
 
   function frame() {
     updateFPS();
-    updateCamera(camera);
+    camera.updateCamera();
+
+    if (sortPoints) {
+      sortSplats(vertexBuffer);
+      sortPoints = false;
+    }
 
     const commandEncoder = device.createCommandEncoder();
     const canvasTexture = context.getCurrentTexture();
@@ -305,53 +313,7 @@ async function render() {
     paddedUniformBufferData.set([pointSize, 0],  34);
 
     device.queue.writeBuffer(uniformBuffer, 0, paddedUniformBufferData.buffer);
-
-    // Create bind groups for this frame
-    const computeDepthBindGroup = device.createBindGroup({
-      layout: computeDepthBindGroupLayout,
-      entries: [
-        { binding: 0, resource: { buffer: uniformBuffer } },
-        { binding: 1, resource: { buffer: vertexBuffer } },
-        { binding: 2, resource: { buffer: depthIndicesBuffer } },
-        { binding: 3, resource: { buffer: depthValuesBuffer } },
-      ]
-    });
     
-    // Step 1: Compute depths
-    const computePass = commandEncoder.beginComputePass();
-    computePass.setPipeline(computeDepthPipeline);
-    computePass.setBindGroup(0, computeDepthBindGroup);
-    computePass.dispatchWorkgroups(Math.ceil(numberOfPoints / 256));
-    computePass.end();
-    
-    // Step 2: Sort depths using bitonic sort
-    // Bitonic sort requires power-of-2 sized arrays
-    const powerOf2Size = Math.pow(2, Math.ceil(Math.log2(numberOfPoints)));
-    
-    // For each stage of the bitonic sort
-    for (let stage = 1; stage < powerOf2Size; stage <<= 1) {
-      for (let substage = stage; substage > 0; substage >>= 1) {
-        const sortParams = new Uint32Array([numberOfPoints, substage, 0, 0]); // size, stage, direction
-        device.queue.writeBuffer(sortParamsBuffer, 0, sortParams);
-        
-        const sortBindGroup = device.createBindGroup({
-          layout: sortBindGroupLayout,
-          entries: [
-            { binding: 0, resource: { buffer: depthIndicesBuffer } },
-            { binding: 1, resource: { buffer: depthValuesBuffer } },
-            { binding: 2, resource: { buffer: sortParamsBuffer } },
-          ]
-        });
-        
-        const sortPass = commandEncoder.beginComputePass();
-        sortPass.setPipeline(sortPipeline);
-        sortPass.setBindGroup(0, sortBindGroup);
-        sortPass.dispatchWorkgroups(Math.ceil(powerOf2Size / 512));
-        sortPass.end();
-      }
-    }
-
-    // Step 3: Render with sorted indices
     const renderPass = commandEncoder.beginRenderPass({
         colorAttachments: [{
             view: textureView,
@@ -370,16 +332,13 @@ async function render() {
     renderPass.setPipeline(pipeline);
     renderPass.setVertexBuffer(0, vertexBuffer);
     renderPass.setBindGroup(0, bindGroup);
-    
-    // Using indirect drawing with the sorted indices buffer
-    renderPass.setVertexBuffer(1, depthIndicesBuffer); // Set our indices buffer as a secondary vertex buffer
     renderPass.draw(6, numberOfPoints, 0, 0);
 
     // Render axis gizmo
-    renderPass.setPipeline(gizmoPipeline);
-    renderPass.setVertexBuffer(0, axisBuffer);
-    renderPass.setBindGroup(0, bindGroup); 
-    renderPass.draw(6, 1, 0, 0);
+    // renderPass.setPipeline(gizmoPipeline);
+    // renderPass.setVertexBuffer(0, axisBuffer);
+    // renderPass.setBindGroup(0, bindGroup); 
+    // renderPass.draw(6, 1, 0, 0);
 
     renderPass.end();
 

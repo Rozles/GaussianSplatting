@@ -8,90 +8,130 @@ function rotateVectorAroundAxis(vector: vec3, axis: vec3, angle: number): vec3 {
     vec3.normalize(vector, vector);
 }
 
-let mouseDown = false;
-let lastMouseX = 0;
-let lastMouseY = 0;
-let mouseX = 0;
-let mouseY = 0;
-let pressedKeys = new Set<string>();
-let frameTimer = performance.now();
+export class CameraController {
+    private camera: Camera;
+    private mouseDown = false;
+    private lastMouseX = 0;
+    private lastMouseY = 0;
+    private mouseX = 0;
+    private mouseY = 0;
+    private pressedKeys: Set<string>;
+    private frameTimer: number;
 
-window.addEventListener('mousemove', handleMouseMove);
-window.addEventListener('mousedown', handleMouseDown);
-window.addEventListener('mouseup', handleMouseUp);
-window.addEventListener('keydown', handleKeyDown);
-window.addEventListener('keyup', handleKeyUp);
+    constructor(aspect: number) {
+        this.camera = new Camera(aspect);
+        this.pressedKeys = new Set<string>();
+        this.frameTimer = performance.now();
 
-function handleMouseDown(event) {
-  // check if the mouse is inside the canvas
-  if (event.target.tagName === 'CANVAS') {
-  
-    mouseDown = true;
-    lastMouseX = event.clientX;
-    lastMouseY = event.clientY;
-  }
+        // Bind the event handlers to the current instance
+        this.handleMouseMove = this.handleMouseMove.bind(this);
+        this.handleMouseDown = this.handleMouseDown.bind(this);
+        this.handleMouseUp = this.handleMouseUp.bind(this);
+        this.handleKeyDown = this.handleKeyDown.bind(this);
+        this.handleKeyUp = this.handleKeyUp.bind(this);
+
+        window.addEventListener('mousemove', this.handleMouseMove);
+        window.addEventListener('mousedown', this.handleMouseDown);
+        window.addEventListener('mouseup', this.handleMouseUp);
+        window.addEventListener('keydown', this.handleKeyDown);
+        window.addEventListener('keyup', this.handleKeyUp);
+    }
+
+    getCamera(): Camera {
+        return this.camera;
+    }
+
+    getPosition(): vec3 {
+        return this.camera.getPosition();
+    }
+
+    getViewMatrix(): mat4 {
+        return this.camera.getViewMatrix();
+    }
+
+    getProjectionMatrix(): mat4 {
+        return this.camera.getProjectionMatrix();
+    }
+
+    update() {
+        this.updateCamera(this.camera);
+    }
+
+    setAspect(aspect: number) {
+        this.camera.setAspect(aspect);
+    }
+
+    handleMouseDown(event) {
+        // check if the mouse is inside the canvas
+        if (event.target.tagName === 'CANVAS') {
+        
+            this.mouseDown = true;
+            this.lastMouseX = event.clientX;
+            this.lastMouseY = event.clientY;
+        }
+    }
+        
+    handleMouseUp(event) {
+        this.mouseDown = false;
+    }
+    
+    handleMouseMove(event) {
+        this.mouseX = event.clientX;
+        this.mouseY = event.clientY;
+    }
+    
+    handleKeyDown(event) {
+        this.pressedKeys.add(event.key.toLowerCase());
+    }
+      
+    handleKeyUp(event) {
+        this.pressedKeys.delete(event.key.toLowerCase());
+    }
+
+    updateCamera() {
+        const currentTime = performance.now();
+        const deltaTime = (currentTime - this.frameTimer) / 1000;
+        this.frameTimer = currentTime;
+        
+        // rotation
+        let deltaX = 0;
+        let deltaY = 0;
+        if (this.mouseDown) {
+            deltaX = this.mouseX - this.lastMouseX;
+            deltaY = this.mouseY - this.lastMouseY;
+            this.lastMouseX = this.mouseX;
+            this.lastMouseY = this.mouseY;
+        }
+        
+        const sensitivity = 1 * deltaTime;
+        const yaw = deltaX * sensitivity;
+        const pitch = deltaY * sensitivity;
+        
+        this.camera.rotateYaw(-yaw);
+        this.camera.rotatePitch(pitch);
+        
+        // movement
+        const step = 1 * deltaTime;
+        if (this.pressedKeys.has('w') || this.pressedKeys.has('arrowup')) {
+            this.camera.moveForward(step);
+        }
+        if (this.pressedKeys.has('s') || this.pressedKeys.has('arrowdown')) {
+            this.camera.moveBackward(step);
+        }
+        if (this.pressedKeys.has('a') || this.pressedKeys.has('arrowleft')) {
+            this.camera.moveLeft(step);
+        }
+        if (this.pressedKeys.has('d') || this.pressedKeys.has('arrowright')) {
+            this.camera.moveRight(step);
+        }
+        if (this.pressedKeys.has('shift')) {
+            this.camera.moveDown(step);
+        }
+        if (this.pressedKeys.has(' ')) {
+            this.camera.moveUp(step);
+        }
+    }
 }
-  
-function handleMouseUp(event) {
-    mouseDown = false;
-}
-
-function handleMouseMove(event) {
-    mouseX = event.clientX;
-    mouseY = event.clientY;
-}
-
-function handleKeyDown(event) {
-    pressedKeys.add(event.key.toLowerCase());
-}
-
-function handleKeyUp(event) {
-    pressedKeys.delete(event.key.toLowerCase());
-}
-
-export function updateCamera(camera: Camera) {
-    const currentTime = performance.now();
-    const deltaTime = (currentTime - frameTimer) / 1000;
-    frameTimer = currentTime;
-  
-    // rotation
-    let deltaX = 0;
-    let deltaY = 0;
-    if (mouseDown) {
-      deltaX = mouseX - lastMouseX;
-      deltaY = mouseY - lastMouseY;
-      lastMouseX = mouseX;
-      lastMouseY = mouseY;
-    }
-  
-    const sensitivity = 1 * deltaTime;
-    const yaw = deltaX * sensitivity;
-    const pitch = deltaY * sensitivity;
-  
-    camera.rotateYaw(-yaw);
-    camera.rotatePitch(pitch);
-  
-    // movement
-    const step = 1 * deltaTime;
-    if (pressedKeys.has('w') || pressedKeys.has('arrowup')) {
-      camera.moveForward(step);
-    }
-    if (pressedKeys.has('s') || pressedKeys.has('arrowdown')) {
-      camera.moveBackward(step);
-    }
-    if (pressedKeys.has('a') || pressedKeys.has('arrowleft')) {
-      camera.moveLeft(step);
-    }
-    if (pressedKeys.has('d') || pressedKeys.has('arrowright')) {
-      camera.moveRight(step);
-    }
-    if (pressedKeys.has('shift')) {
-      camera.moveDown(step);
-    }
-    if (pressedKeys.has(' ')) {
-      camera.moveUp(step);
-    }
-  }
 
 export class Camera {
 
@@ -119,6 +159,20 @@ export class Camera {
         this.perspectiveMatrix = mat4.create();
         mat4.perspective(this.perspectiveMatrix, Math.PI / 3, this.aspect, 0.1, 100);
 
+        this.update();
+    }
+
+    getPosition(): vec3 {
+        return this.position;
+    }
+
+    setPosition(position: vec3) {
+        this.position = position;
+        this.update();
+    }
+
+    setForwardVec(forwardVec: vec3) {
+        this.forwardVec = forwardVec;
         this.update();
     }
 

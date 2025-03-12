@@ -21,7 +21,7 @@ struct Uniforms {
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
 
 @vertex
-fn main(splat: Splat, @builtin(vertex_index) vertexIndex: u32, @builtin(instance_index) instanceIndex: u32) -> VertexOutput {
+fn main(splat: Splat, @builtin(vertex_index) vertexIndex: u32) -> VertexOutput {
     let quadVertices = array<vec2<f32>, 6>(
         vec2<f32>(-1.0, -1.0),
         vec2<f32>( 1.0, -1.0),
