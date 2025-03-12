@@ -140,11 +140,12 @@ fn main(splat: Splat, @builtin(vertex_index) index: u32) -> VertexOutput {
     let clip_pos = uniforms.projection * camera_pos;
     let ndc_pos = vec2<f32>(clip_pos.x / clip_pos.w, clip_pos.y / clip_pos.w);
 
-    let mean_val = (cov_2d[0][0] + cov_2d[1][1]) * 0.5;
-    let diff = (cov_2d[0][0] - cov_2d[1][1]) * 0.5;
-    let discriminant = sqrt(diff * diff + cov_2d[0][1] * cov_2d[0][1]);
-    let eigenvalue1 = mean_val + discriminant;
-    let eigenvalue2 = mean_val - discriminant;
+    let a = 1.0;
+    let b = -(cov_2d[0][0] + cov_2d[1][1]);
+    let c = cov_2d[0][0] * cov_2d[1][1] - cov_2d[0][1] * cov_2d[1][0];
+    let discriminant = b * b - 4.0 * a * c;
+    let eigenvalue1 = (-b + sqrt(max(discriminant, 0.0))) / (2.0 * a);
+    let eigenvalue2 = (-b - sqrt(max(discriminant, 0.0))) / (2.0 * a);
     
     // Calculate eigenvectors
     var eigenvector1: vec2<f32>;
@@ -195,7 +196,8 @@ fn main(splat: Splat, @builtin(vertex_index) index: u32) -> VertexOutput {
     );
     
     // Screen position with size
-    let screen_pos = clip_pos + vec4<f32>(rotated_corner, 0.0, 1.0);
+    //let screen_pos = clip_pos + vec4<f32>(rotated_corner, 0.0, 1.0);
+    let screen_pos = vec4<f32>(ndc_pos + rotated_corner, 0.0, 1.0);
 
     let normalizedColor = vec4<f32>(
         f32((splat.color >> 0) & 0xFF) / 255.0,

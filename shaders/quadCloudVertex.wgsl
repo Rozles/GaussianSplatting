@@ -48,5 +48,3 @@ fn main(splat: Splat, @builtin(vertex_index) index: u32) -> VertexOutput {
 
     return output;
 }
-
-
