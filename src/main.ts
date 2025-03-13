@@ -152,11 +152,11 @@ async function initWebGPU() {
 }
 
 async function createPipeline(device: GPUDevice, presentationFormat: any) {
-  //const pointCloudVertWGSL = await fetch("shaders/gaussianSplat.vertex.wgsl").then(res => res.text());
-  //const pointCloudFragWGSL = await fetch("shaders/gaussianSplat.frag.wgsl").then(res => res.text());
-
   const pointCloudVertWGSL = await fetch("shaders/gaussianSplat.vertex.wgsl").then(res => res.text());
   const pointCloudFragWGSL = await fetch("shaders/gaussianSplat.frag.wgsl").then(res => res.text());
+
+  // const pointCloudVertWGSL = await fetch("shaders/quadCloudVertex.wgsl").then(res => res.text());
+  // const pointCloudFragWGSL = await fetch("shaders/quadCloudFragment.wgsl").then(res => res.text());
 
 
   const pointCloudVertModule = device.createShaderModule({ code: pointCloudVertWGSL });
@@ -290,6 +290,8 @@ function sortSplats(vertexBuffer: GPUBuffer) {
 async function render() {
   const { pipeline, vertexBuffer, uniformBuffer, bindGroup } = await createPipeline(device, presentationFormat);
   //const { gizmoPipeline, axisBuffer } = await createAxisGizmoPipeline(device, presentationFormat);
+
+  console.log(camera.getProjectionMatrix());
 
   device.queue.writeBuffer(vertexBuffer, 0, gaussianCloud);
 

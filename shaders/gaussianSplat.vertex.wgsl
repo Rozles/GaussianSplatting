@@ -21,7 +21,7 @@ struct VertexOutput {
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
 
-fn quaternion_to_rotation_matrix(q: vec4<f32>) -> mat3x3<f32> {
+fn rotation_from_quat(q: vec4<f32>) -> mat3x3<f32> {
     let q_normalized = normalize(q);
     let x = q_normalized.x;
     let y = q_normalized.y;
@@ -84,20 +84,20 @@ fn build_covariance_3d(scale: vec3<f32>, q: vec4<f32>) -> mat3x3<f32> {
     return rot * S_squared * transpose(rot);
 }
 
-fn compute_jacobian(position_camera: vec3<f32>) -> mat2x3<f32> {
-    // Jacobian of perspective projection at the camera-space position
-    // For a typical perspective projection: x' = x/z, y' = y/z
-    
+fn compute_jacobian(position_camera: vec3<f32>) -> mat3x3<f32> {
     let z_inv = 1.0 / position_camera.z;
     let z_inv_sq = z_inv * z_inv;
+
+    let a = uniforms.projection[0][0];
+    let b = uniforms.projection[1][1];
+    let c = uniforms.projection[2][2];
+    let d = uniforms.projection[3][2];
     
-    // First row: partial derivatives of x' = x/z with respect to x,y,z
-    let j1 = vec3<f32>(z_inv, 0.0, -position_camera.x * z_inv_sq);
+    let j1 = vec3<f32>(a * z_inv, 0.0, -position_camera.x * d * z_inv_sq);
+    let j2 = vec3<f32>(0.0, b * z_inv, -position_camera.y * d * z_inv_sq);
+    let j3 = vec3<f32>(0.0, 0.0, -c * z_inv_sq);
     
-    // Second row: partial derivatives of y' = y/z with respect to x,y,z
-    let j2 = vec3<f32>(0.0, z_inv, -position_camera.y * z_inv_sq);
-    
-    return mat2x3<f32>(j1, j2);
+    return mat3x3<f32>(j1, j2, j3);
 }
 
 @vertex
@@ -106,74 +106,55 @@ fn main(splat: Splat, @builtin(vertex_index) index: u32) -> VertexOutput {
     let camera_pos = uniforms.view * world_pos;
 
     let rot_quat = vec4<f32>(
+        f32(((splat.rotation >> 24) & 0xFF) - 128) / 128.0,
         f32(((splat.rotation >> 0) & 0xFF) - 128) / 128.0,
         f32(((splat.rotation >> 8) & 0xFF) - 128) / 128.0,
         f32(((splat.rotation >> 16) & 0xFF) - 128) / 128.0,
-        f32(((splat.rotation >> 24) & 0xFF) - 128) / 128.0,
     );
 
-    // Build the covariance matrix in world space
-    let cov_3d_world = build_covariance_3d(splat.scale, rot_quat);
-
-    // Transform the covariance matrix to camera space
-    let view_rotation = mat3x3<f32>(
+    let view3 = mat3x3<f32>(
         uniforms.view[0].xyz,
         uniforms.view[1].xyz,
         uniforms.view[2].xyz
     );
-    
-    let cov_3d_camera = view_rotation * cov_3d_world * transpose(view_rotation);
+
+    let scale3 = mat3x3<f32>(
+        splat.scale.x, 0.0, 0.0,
+        0.0, splat.scale.y, 0.0,
+        0.0, 0.0, splat.scale.z
+    )
+
+    let rotation = rotation_from_quat(rot_quat);
 
     let jacobian = compute_jacobian(camera_pos.xyz);
 
-    let temp = mat2x3_times_mat3x3(jacobian, cov_3d_camera);
-    let cov_2d = mat2x3_times_transpose_mat2x3(temp, jacobian);
-    
-    let det = cov_2d[0][0] * cov_2d[1][1] - cov_2d[0][1] * cov_2d[1][0];
+    let t = jacobian * view3 * scale3 * rotation;
+    let sigma3 = t * transpose(t);
+
+    let sigma2 = mat2x2<f32>(
+        vec2<f32>(sigma3[0][0], sigma3[0][1]),
+        vec2<f32>(sigma3[1][0], sigma3[1][1])
+    );
+
+
+    let det = sigma2[0][0] * sigma2[1][1] - sigma2[0][1] * sigma2[1][0];
     let inv_det = 1.0 / max(det, 1e-6);
     
-    let cov_2d_inv = mat2x2<f32>(
-        vec2<f32>(cov_2d[1][1] * inv_det, -cov_2d[0][1] * inv_det),
-        vec2<f32>(-cov_2d[1][0] * inv_det, cov_2d[0][0] * inv_det)
+    let sigma2_inv = mat2x2<f32>(
+        vec2<f32>(sigma2[1][1] * inv_det, -sigma2[0][1] * inv_det),
+        vec2<f32>(-sigma2[1][0] * inv_det, sigma2[0][0] * inv_det)
     );
     
     let clip_pos = uniforms.projection * camera_pos;
     let ndc_pos = vec2<f32>(clip_pos.x / clip_pos.w, clip_pos.y / clip_pos.w);
 
     let a = 1.0;
-    let b = -(cov_2d[0][0] + cov_2d[1][1]);
-    let c = cov_2d[0][0] * cov_2d[1][1] - cov_2d[0][1] * cov_2d[1][0];
+    let b = -(sigma2[0][0] + sigma2[1][1]);
+    let c = sigma2[0][0] * sigma2[1][1] - sigma2[0][1] * sigma2[1][0];
     let discriminant = b * b - 4.0 * a * c;
     let eigenvalue1 = (-b + sqrt(max(discriminant, 0.0))) / (2.0 * a);
     let eigenvalue2 = (-b - sqrt(max(discriminant, 0.0))) / (2.0 * a);
     
-    // Calculate eigenvectors
-    var eigenvector1: vec2<f32>;
-    var eigenvector2: vec2<f32>;
-    
-    if (abs(cov_2d[0][1]) < 1e-6) {
-        // Matrix is already diagonal
-        if (cov_2d[0][0] >= cov_2d[1][1]) {
-            eigenvector1 = vec2<f32>(1.0, 0.0);
-            eigenvector2 = vec2<f32>(0.0, 1.0);
-        } else {
-            eigenvector1 = vec2<f32>(0.0, 1.0);
-            eigenvector2 = vec2<f32>(1.0, 0.0);
-        }
-    } else {
-        // Calculate first eigenvector
-        let v1_x = eigenvalue1 - cov_2d[1][1];
-        let v1_y = cov_2d[0][1];
-        eigenvector1 = normalize(vec2<f32>(v1_x, v1_y));
-        
-        // Second eigenvector is perpendicular to the first
-        eigenvector2 = vec2<f32>(-eigenvector1.y, eigenvector1.x);
-    }
-    
-    let radius_x = sqrt(max(eigenvalue1, 0.0)) * uniforms.size;
-    let radius_y = sqrt(max(eigenvalue2, 0.0)) * uniforms.size;
-    
-    // Quad corner based on vertex_idx (0,1,2,0,2,3)
     let quad_corners = array<vec2<f32>, 6>(
         vec2<f32>(-1.0, -1.0),
         vec2<f32>(-1.0, 1.0),
@@ -185,19 +166,12 @@ fn main(splat: Splat, @builtin(vertex_index) index: u32) -> VertexOutput {
 
     let corner = quad_corners[index];
 
-    let scaled_corner = vec2<f32>(
-        corner.x * radius_x,
-        corner.y * radius_y
-    );
-
     let rotated_corner = vec2<f32>(
-        eigenvector1.x * scaled_corner.x + eigenvector2.x * scaled_corner.y,
-        eigenvector1.y * scaled_corner.x + eigenvector2.y * scaled_corner.y
+        eigenvector1.x * scaled_corner.x + eigenvector2.x * scaled_corner.x,
+        eigenvector1.y * scaled_corner.y + eigenvector2.y * scaled_corner.y
     );
     
-    // Screen position with size
-    //let screen_pos = clip_pos + vec4<f32>(rotated_corner, 0.0, 1.0);
-    let screen_pos = vec4<f32>(ndc_pos + rotated_corner, 0.0, 1.0);
+    let screen_pos = clip_pos + vec4<f32>(rotated_corner, 0.0, 1.0);
 
     let normalizedColor = vec4<f32>(
         f32((splat.color >> 0) & 0xFF) / 255.0,
@@ -208,9 +182,9 @@ fn main(splat: Splat, @builtin(vertex_index) index: u32) -> VertexOutput {
     
     var output: VertexOutput;
     output.position = screen_pos;
-    output.uv = corner * 0.5 + 0.5; // Map [-1,1] to [0,1]
+    output.uv = corner; // Map [-1,1] to [0,1]
     output.color = normalizedColor;
-    output.cov_inv = vec4<f32>(cov_2d_inv[0][0], cov_2d_inv[0][1], cov_2d_inv[1][0], cov_2d_inv[1][1]);
+    output.cov_inv = vec4<f32>(sigma2_inv[0][0], sigma2_inv[0][1], sigma2_inv[1][0], sigma2_inv[1][1]);
     
     return output;
 }
