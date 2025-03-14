@@ -15,6 +15,8 @@ struct Uniforms {
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) color: vec4<f32>,
+    @location(1) uv: vec2<f32>,
+    @location(2) sigma: f32,
 }
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -33,7 +35,7 @@ fn main(splat: Splat, @builtin(vertex_index) index: u32) -> VertexOutput {
     let quadVertex = quadVertices[index];
     let worldPos = vec4<f32>(splat.position.x, -splat.position.y, splat.position.z, 1.0);
     let clipPos = uniforms.projection * uniforms.view * worldPos;
-    let pointPos = vec4f(quadVertex * 2 * uniforms.size / uniforms.resolution, 0, 0);
+    let pointPos = vec4f(quadVertex * uniforms.size / uniforms.resolution, 0, 0);
 
     var output: VertexOutput;
     output.position = clipPos + pointPos;
@@ -45,6 +47,8 @@ fn main(splat: Splat, @builtin(vertex_index) index: u32) -> VertexOutput {
             f32((splat.color >> 24) & 0xFF) / 255.0
         );
     output.color = normalizedColor;
+    output.uv = quadVertex;
+    output.sigma = uniforms.size / output.position.z;
 
     return output;
 }

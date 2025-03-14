@@ -152,11 +152,22 @@ async function initWebGPU() {
 }
 
 async function createPipeline(device: GPUDevice, presentationFormat: any) {
-  const pointCloudVertWGSL = await fetch("shaders/gaussianSplat.vertex.wgsl").then(res => res.text());
+
+  // Gaussian splatting 3.5
+  const pointCloudVertWGSL = await fetch("shaders/gaussianSplat.vert.wgsl").then(res => res.text());
   const pointCloudFragWGSL = await fetch("shaders/gaussianSplat.frag.wgsl").then(res => res.text());
 
-  // const pointCloudVertWGSL = await fetch("shaders/quadCloudVertex.wgsl").then(res => res.text());
-  // const pointCloudFragWGSL = await fetch("shaders/quadCloudFragment.wgsl").then(res => res.text());
+  // Gaussian quads 3.4
+  // const pointCloudVertWGSL = await fetch("shaders/quadGauss.vert.wgsl").then(res => res.text());
+  // const pointCloudFragWGSL = await fetch("shaders/quadGauss.frag.wgsl").then(res => res.text());
+
+  // Quad cloud
+  // const pointCloudVertWGSL = await fetch("shaders/quadCloud.vertex.wgsl").then(res => res.text());
+  // const pointCloudFragWGSL = await fetch("shaders/quadCloud.frag.wgsl").then(res => res.text());
+
+  // Point cloud 
+  // const pointCloudVertWGSL = await fetch("shaders/pointCloud.vertex.wgsl").then(res => res.text());
+  // const pointCloudFragWGSL = await fetch("shaders/pointCloud.frag.wgsl").then(res => res.text());
 
 
   const pointCloudVertModule = device.createShaderModule({ code: pointCloudVertWGSL });
@@ -248,7 +259,6 @@ async function createPipeline(device: GPUDevice, presentationFormat: any) {
 }
 
 function sortSplats(vertexBuffer: GPUBuffer) {
-  const startTime = performance.now();
   const cameraPos = camera.getPosition();
 
   const gaussians = new Array(numberOfPoints);
@@ -260,7 +270,7 @@ function sortSplats(vertexBuffer: GPUBuffer) {
   for (let i = 0; i < numberOfPoints; i++) {
     const posIdx = i * floatsPerSplat;
     const x = floatView[posIdx] - cameraPos[0];
-    const y = floatView[posIdx + 1] - cameraPos[1];
+    const y = -floatView[posIdx + 1] - cameraPos[1];
     const z = floatView[posIdx + 2] - cameraPos[2];
     
     gaussians[i] = {
@@ -290,8 +300,6 @@ function sortSplats(vertexBuffer: GPUBuffer) {
 async function render() {
   const { pipeline, vertexBuffer, uniformBuffer, bindGroup } = await createPipeline(device, presentationFormat);
   //const { gizmoPipeline, axisBuffer } = await createAxisGizmoPipeline(device, presentationFormat);
-
-  console.log(camera.getProjectionMatrix());
 
   device.queue.writeBuffer(vertexBuffer, 0, gaussianCloud);
 
