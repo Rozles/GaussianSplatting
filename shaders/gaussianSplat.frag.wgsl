@@ -6,26 +6,17 @@ struct FragmentInput {
 
 @fragment
 fn main(input: FragmentInput) -> @location(0) vec4<f32> {
-    let x = input.uv.x;
-    let y = input.uv.y;
+    let temp = vec2<f32>(
+        input.uv.x * input.cov_inv.x + input.uv.y * input.cov_inv.y,
+        input.uv.x * input.cov_inv.z + input.uv.y * input.cov_inv.w
+    );
+    let r = dot(input.uv, temp);
 
-    let a= input.cov_inv.x;
-    let b= input.cov_inv.y;
-    let c= input.cov_inv.z;
-    let d= input.cov_inv.w;
+    if r > 4.0 {
+        discard;
+    }
 
-    let temp = vec2<f32>(x * a + y * c, x * b + y * d);
-    let power = -0.5 * dot(temp, input.uv); 
-    
-    let alpha = input.color[3] * exp(power);
+    let alpha = input.color.a * exp(-0.5 * r);
 
-    return vec4<f32>(input.color.xyz * alpha, alpha);
-
-    // let r = dot(input.uv, input.uv);
-    // if (r > 1.0){ discard; } // circle
-    
-    // let splatOpacity = input.color.w;
-    // let Gv = exp(-0.5 * r);
-    // let a = Gv * splatOpacity;
-    // return vec4(a * input.color.rgb, a);
+    return vec4<f32>(input.color.rgb * alpha, alpha);
 }

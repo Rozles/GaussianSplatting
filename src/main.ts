@@ -237,7 +237,7 @@ async function createPipeline(device: GPUDevice, presentationFormat: any) {
   });
 
   const uniformBuffer = device.createBuffer({
-    size: 144,
+    size: 208,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
   });
 
@@ -299,7 +299,7 @@ function sortSplats(vertexBuffer: GPUBuffer) {
 
 async function render() {
   const { pipeline, vertexBuffer, uniformBuffer, bindGroup } = await createPipeline(device, presentationFormat);
-  //const { gizmoPipeline, axisBuffer } = await createAxisGizmoPipeline(device, presentationFormat);
+  const { gizmoPipeline, axisBuffer } = await createAxisGizmoPipeline(device, presentationFormat);
 
   device.queue.writeBuffer(vertexBuffer, 0, gaussianCloud);
 
@@ -316,11 +316,12 @@ async function render() {
     const canvasTexture = context.getCurrentTexture();
     const textureView = canvasTexture.createView();
 
-    const paddedUniformBufferData = new Float32Array(36);
+    const paddedUniformBufferData = new Float32Array(52);
     paddedUniformBufferData.set(camera.getViewMatrix());
-    paddedUniformBufferData.set(camera.getProjectionMatrix(), 16);
-    paddedUniformBufferData.set([canvasTexture.width, canvasTexture.height], 32);
-    paddedUniformBufferData.set([pointSize, 0],  34);
+    paddedUniformBufferData.set(camera.getViewMatrixInverse(), 16);
+    paddedUniformBufferData.set(camera.getProjectionMatrix(), 32);
+    paddedUniformBufferData.set([canvasTexture.width, canvasTexture.height], 48);
+    paddedUniformBufferData.set([pointSize, 0],  50);
 
     device.queue.writeBuffer(uniformBuffer, 0, paddedUniformBufferData.buffer);
     
@@ -345,10 +346,10 @@ async function render() {
     renderPass.draw(6, numberOfPoints, 0, 0);
 
     // Render axis gizmo
-    // renderPass.setPipeline(gizmoPipeline);
-    // renderPass.setVertexBuffer(0, axisBuffer);
-    // renderPass.setBindGroup(0, bindGroup); 
-    // renderPass.draw(6, 1, 0, 0);
+    renderPass.setPipeline(gizmoPipeline);
+    renderPass.setVertexBuffer(0, axisBuffer);
+    renderPass.setBindGroup(0, bindGroup); 
+    renderPass.draw(6, 1, 0, 0);
 
     renderPass.end();
 

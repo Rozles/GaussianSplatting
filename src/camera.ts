@@ -49,6 +49,13 @@ export class CameraController {
         return this.camera.getViewMatrix();
     }
 
+    getViewMatrixInverse(): mat4 {
+        let viewMatrix = this.camera.getViewMatrix();
+        let inverse = mat4.create();
+        mat4.invert(inverse, viewMatrix);
+        return inverse;
+    }
+
     getProjectionMatrix(): mat4 {
         return this.camera.getProjectionMatrix();
     }

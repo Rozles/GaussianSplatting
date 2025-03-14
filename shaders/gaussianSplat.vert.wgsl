@@ -7,6 +7,7 @@ struct Splat {
 
 struct Uniforms {
     view: mat4x4<f32>,
+    inv_view: mat4x4<f32>,
     projection: mat4x4<f32>,
     resolution: vec2<f32>,
     size: f32,
@@ -53,8 +54,8 @@ fn compute_jacobian(position_camera: vec3<f32>) -> mat3x3<f32> {
     let a = uniforms.projection[3][2];
 
     let jacobian = mat3x3<f32>(
-        vec3<f32>(f_x / z, 0.0, -x * f_x / (z * z)),
-        vec3<f32>(0.0, f_y / z, -y * f_y / (z * z)),
+        vec3<f32>(a *f_x / z, 0.0, -x * a*f_x / (z * z)),
+        vec3<f32>(0.0, a*f_y / z, -y * a*f_y / (z * z)),
         vec3<f32>(0.0, 0.0, 0.0)
     );
     
@@ -69,10 +70,10 @@ fn main(splat: Splat, @builtin(vertex_index) index: u32) -> VertexOutput {
     let ndc_pos = clip_pos / clip_pos.w;
 
     let rot_quat = vec4<f32>(
-        f32(((splat.rotation >> 0) & 0xFF) - 128) / 128.0,
         f32(((splat.rotation >> 8) & 0xFF) - 128) / 128.0,
         f32(((splat.rotation >> 16) & 0xFF) - 128) / 128.0,
         f32(((splat.rotation >> 24) & 0xFF) - 128) / 128.0,
+        f32(((splat.rotation >> 0) & 0xFF) - 128) / 128.0,
     );
 
     let view3 = mat3x3<f32>(
@@ -88,10 +89,11 @@ fn main(splat: Splat, @builtin(vertex_index) index: u32) -> VertexOutput {
     );
 
     let rotation = rotation_from_quat(rot_quat);
+    let rotation2 = transpose(rotation);
 
     let jacobian = compute_jacobian(camera_pos.xyz);
 
-    let m = jacobian * view3 * scale3 * rotation;
+    let m = jacobian * view3 * scale3 * rotation2;
     let sigma_dash = m * transpose(m);
 
     let sigma2 = mat2x2<f32>(
@@ -107,7 +109,6 @@ fn main(splat: Splat, @builtin(vertex_index) index: u32) -> VertexOutput {
         vec2<f32>(-sigma2[1][0] * inv_det, sigma2[0][0] * inv_det)
     );
 
-    // Eigenvalues 
     let a = sigma2[0][0];
     let b = sigma2[0][1];
     let c = sigma2[1][1];
@@ -115,40 +116,24 @@ fn main(splat: Splat, @builtin(vertex_index) index: u32) -> VertexOutput {
     let eigenvalue1 = (a + c + sqrt(a * a + 2 * a * c + c * c - 4 * (a * c - b * b))) / 2;
     let eigenvalue2 = (a + c - sqrt(a * a + 2 * a * c + c * c - 4 * (a * c - b * b))) / 2;
 
-    let diagonalVector = normalize(vec2(1, (-a+b+eigenvalue1) / (b-c+eigenvalue1)));
-    let diagonalVectorOther = vec2(diagonalVector.y, -diagonalVector.x);
+    let eigen_vector1 = normalize(vec2(1, (-a+b+eigenvalue1) / (b-c+eigenvalue1)));
+    let eigen_vector2 = normalize(vec2(- eigen_vector1.y, eigen_vector1.x));
 
-    let majorAxis = sqrt(max(eigenvalue1, 0.0)) * diagonalVector;
-    let minorAxis = sqrt(max(eigenvalue2, 0.0)) * diagonalVectorOther;
-
-    // Calculate the eigenvectors
-    // var eigenvector1: vec2<f32>;
-    // var eigenvector2: vec2<f32>;
-
-    // if (sigma2[0][1] != 0.0 || sigma2[1][0] != 0.0) {
-    //     eigenvector1 = normalize(vec2<f32>(1, -(sigma2[0][0] - eigenvalue1) / sigma2[0][1]));
-    //     eigenvector2 = normalize(vec2<f32>(1, -(sigma2[0][0] - eigenvalue2) / sigma2[0][1]));
-    // } else {
-    //     eigenvector1 = vec2<f32>(1.0, 0.0);
-    //     eigenvector2 = vec2<f32>(0.0, 1.0);
-    // }
+    let majorAxis = min(3 * sqrt(max(eigenvalue1, 0.0)), 10) * eigen_vector1;
+    let minorAxis = min(3 * sqrt(max(eigenvalue2, 0.0)), 10) * eigen_vector2;
     
     let quad_corners = array<vec2<f32>, 6>(
-        vec2<f32>(-1.0, -1.0),
+        vec2<f32>(1.0, 1.0),
         vec2<f32>(-1.0, 1.0),
-        vec2<f32>(1.0, 1.0),
-        vec2<f32>(-1.0, -1.0),
-        vec2<f32>(1.0, 1.0),
-        vec2<f32>(1.0, -1.0)
+        vec2<f32>(1.0, -1.0),
+        vec2<f32>(1.0, -1.0),
+        vec2<f32>(-1.0, 1.0),
+        vec2<f32>(-1.0, -1.0)
     );
 
     let corner = quad_corners[index];
-    let add_this = (corner.x * majorAxis
-                + corner.y * minorAxis) * uniforms.size;
-
-
-    // let corner = contribution[0] * eigenvector1 * eigenvalue1 + contribution[1] * eigenvector2 * eigenvalue2;
-    // let vertex_position = vec4<f32>(corner * uniforms.size * 100, 0.0, 0.0);
+    let add_this = corner.x * majorAxis + corner.y * minorAxis;
+    let output_vertex = ndc_pos + vec4<f32>(add_this * uniforms.size, 0.0, 0.0);
 
     let normalizedColor = vec4<f32>(
         f32((splat.color >> 0) & 0xFF) / 255.0,
@@ -157,9 +142,11 @@ fn main(splat: Splat, @builtin(vertex_index) index: u32) -> VertexOutput {
         f32((splat.color >> 24) & 0xFF) / 255.0
     );
     
+
+    let uv = corner.x * majorAxis + corner.y * minorAxis;
     var output: VertexOutput;
-    output.position = ndc_pos + vec4<f32>(add_this, 0.0, 0.0);
-    output.uv = corner;
+    output.position = output_vertex;
+    output.uv = add_this;
     output.color = normalizedColor;
     output.cov_inv = vec4<f32>(sigma2_inv[0][0], sigma2_inv[0][1], sigma2_inv[1][0], sigma2_inv[1][1]);
     
