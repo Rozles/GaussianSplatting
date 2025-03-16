@@ -24,18 +24,18 @@ struct VertexOutput {
 @vertex
 fn main(splat: Splat, @builtin(vertex_index) index: u32) -> VertexOutput {
     let quadVertices = array<vec2<f32>, 6>(
+       vec2<f32>(1.0, -1.0),
         vec2<f32>(-1.0, -1.0),
-        vec2<f32>( 1.0, -1.0),
-        vec2<f32>(-1.0,  1.0),
-        vec2<f32>(-1.0,  1.0),
-        vec2<f32>( 1.0, -1.0),
-        vec2<f32>( 1.0,  1.0),
+        vec2<f32>(1.0, 1.0),
+        vec2<f32>(-1.0, 1.0),
+        vec2<f32>(1.0, 1.0),
+        vec2<f32>(-1.0, -1.0)
     );
 
     let quadVertex = quadVertices[index];
-    let worldPos = vec4<f32>(splat.position.x, -splat.position.y, splat.position.z, 1.0);
+    let worldPos = vec4<f32>(-splat.position.x, -splat.position.y, -splat.position.z, 1.0);
     let clipPos = uniforms.projection * uniforms.view * worldPos;
-    let pointPos = vec4f(quadVertex * uniforms.size / uniforms.resolution, 0, 0);
+    let pointPos = vec4f(quadVertex * uniforms.size * 10 / uniforms.resolution, 0, 0);
 
     var output: VertexOutput;
     output.position = clipPos + pointPos;

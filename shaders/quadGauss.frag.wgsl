@@ -7,6 +7,13 @@ struct FragmentInput {
 
 @fragment
 fn main(input: FragmentInput) -> @location(0) vec4<f32> {
-    let alpha = exp(-0.5 * dot(input.uv, input.uv) * input.sigma);
-    return vec4<f32>(input.color.rgb * alpha, alpha);
+    let r = dot(input.uv, input.uv);
+
+    if (r > 1.0) {
+        discard;
+    }
+
+    let alpha = exp(-0.5 * r * input.sigma);
+    let alpha2 = input.color.a * alpha;
+    return vec4<f32>(input.color.rgb, alpha2);
 }

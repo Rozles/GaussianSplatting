@@ -131,6 +131,12 @@ export class CameraController {
         if (this.pressedKeys.has('d') || this.pressedKeys.has('arrowright')) {
             this.camera.moveRight(step);
         }
+        if (this.pressedKeys.has('q')) {
+            this.camera.rollLeft(step);
+        }
+        if (this.pressedKeys.has('e')) {
+            this.camera.rollRight(step);
+        }
         if (this.pressedKeys.has('shift')) {
             this.camera.moveDown(step);
         }
@@ -246,6 +252,15 @@ export class Camera {
         rotateVectorAroundAxis(this.forwardVec, leftVec, radians);
 
         this.update();
+    }
+
+    rollRight(radians: number) {
+        rotateVectorAroundAxis(this.up, this.forwardVec, radians);
+        this.update();
+    }
+
+    rollLeft(radians: number) {
+        this.rollRight(-radians);
     }
 
     moveUp(distance: number) {

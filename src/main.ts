@@ -1,6 +1,6 @@
-import { GaussianCloud, loadBinaryFile, loadGaussianCloud, Gaussian } from "./utils";
-import { Camera, updateCamera, CameraController } from "./camera";
-import { vec3, mat4 } from "gl-matrix"; 
+import { loadBinaryFile } from "./utils";
+import { CameraController } from "./camera";
+import { vec3 } from "gl-matrix"; 
 import { createAxisGizmoPipeline } from "./gizmo";
 import { GUI } from "./gui";
 
@@ -18,14 +18,21 @@ if (!webGPU) {
 }
 const { device, context, presentationFormat } = webGPU;
 
-//let depthTexture = null;
-
 window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
+
+let sortPoints = false;
+window.addEventListener('keydown', (event) => {
+  if (event.key === 'x') {
+    sortPoints = true;
+  }
+});
 
 // Point cloud data
 const gaussianCloud = await loadBinaryFile("data/nike.splat");
 const numberOfPoints = gaussianCloud.byteLength / 32;
+
+//let depthTexture = null;
 
 function resizeCanvas() {
   const devicePixelRatio = window.devicePixelRatio || 1;
@@ -136,8 +143,8 @@ async function createPipeline(device: GPUDevice, presentationFormat: any) {
             operation: 'add',
           },
           alpha: {
-            srcFactor: 'one',
-            dstFactor: 'zero',
+            srcFactor: 'src-alpha',
+            dstFactor: 'one',
             operation: 'add',
           },
         },
@@ -187,10 +194,11 @@ function sortSplats(vertexBuffer: GPUBuffer) {
   let deltaPosition = vec3.create();
   vec3.sub(deltaPosition, currentPosition, previousPosition);
 
-  if (vec3.length(deltaPosition) < 0.01) {
+  if (vec3.length(deltaPosition) < 0.01 && !sortPoints) {
     return;
   }
 
+  sortPoints = false;
   vec3.copy(previousPosition, currentPosition);
 
   const cameraPos = camera.getPosition();

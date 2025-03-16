@@ -17,7 +17,7 @@ struct VertexOutput {
     @location(0) uv: vec2<f32>,
     @location(1) color: vec4<f32>,
     @location(2) cov_inv: vec4<f32>,
-    @location(3) sigma: f32,
+    @location(3) cutoff: f32,
 }
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -69,10 +69,10 @@ fn main(splat: Splat, @builtin(vertex_index) index: u32, @builtin(instance_index
     let camera_pos = uniforms.view * world_pos;
     let clip_pos = uniforms.projection * camera_pos;
 
-    let qr = f32(((splat.rotation >>  0u) & 0xFF) - 128u) / 128.0;
-    let qi = f32(((splat.rotation >>  8u) & 0xFF) - 128u) / 128.0;
-    let qj = f32(((splat.rotation >> 16u) & 0xFF) - 128u) / 128.0;
-    let qk = f32(((splat.rotation >> 24u) & 0xFF) - 128u) / 128.0;
+    let qr = (f32((splat.rotation >>  0u) & 0xFF) - 128.0) / 128.0;
+    let qi = (f32((splat.rotation >>  8u) & 0xFF) - 128.0) / 128.0;
+    let qj = (f32((splat.rotation >> 16u) & 0xFF) - 128.0) / 128.0;
+    let qk = (f32((splat.rotation >> 24u) & 0xFF) - 128.0) / 128.0;
 
     let rot_quat = vec4<f32>(qr, qi, qj, qk);
 
@@ -101,8 +101,8 @@ fn main(splat: Splat, @builtin(vertex_index) index: u32, @builtin(instance_index
     );
 
     let low_pass = mat2x2<f32>(
-        vec2<f32>(0.01, 0.0),
-        vec2<f32>(0.0, 0.01)
+        vec2<f32>(0.1, 0.0),
+        vec2<f32>(0.0, 0.1)
     );
 
     sigma2 = sigma2 + low_pass;
@@ -126,8 +126,6 @@ fn main(splat: Splat, @builtin(vertex_index) index: u32, @builtin(instance_index
     let eigen_vector1 = normalize(vec2<f32>(b, (eigenvalue1 - a)));
     let eigen_vector2 = vec2<f32>(eigen_vector1.y, -eigen_vector1.x);
 
-    let max_radius = 2.0;
-
     let major_scale = uniforms.size * sqrt(eigenvalue1) * 0.1;
     let minor_scale = uniforms.size * sqrt(eigenvalue2) * 0.1;
     let major_axis = major_scale * eigen_vector1;
@@ -142,11 +140,15 @@ fn main(splat: Splat, @builtin(vertex_index) index: u32, @builtin(instance_index
         vec2<f32>(-1.0, -1.0)
     );
 
-    let quad_vertex = quad_vertex_offset[index % 6];
+    let cutoff = 2.0;
 
-    let out_pos = (clip_pos.xy 
-                    + quad_vertex.x * clip_pos.w * major_axis / uniforms.resolution
-                    + quad_vertex.y * clip_pos.w * minor_axis / uniforms.resolution);
+    let quad_vertex = quad_vertex_offset[index % 6] * cutoff;
+
+    let out_pos = vec4<f32>(
+        (clip_pos.xy 
+        + quad_vertex.x * clip_pos.w * major_axis / uniforms.resolution
+        + quad_vertex.y * clip_pos.w * minor_axis / uniforms.resolution), 
+        clip_pos.zw);
 
     let normalizedColor = vec4<f32>(
         f32((splat.color >> 0) & 0xFF) / 255.0,
@@ -156,11 +158,11 @@ fn main(splat: Splat, @builtin(vertex_index) index: u32, @builtin(instance_index
     );
 
     var output: VertexOutput;
-    output.position = vec4<f32>(out_pos, clip_pos.zw);
+    output.position = out_pos;
     output.uv = quad_vertex;
     output.color = normalizedColor;
     output.cov_inv = vec4<f32>(sigma2_inv[0][0], sigma2_inv[0][1], sigma2_inv[1][0], sigma2_inv[1][1]);
-    output.sigma = uniforms.size / clip_pos.z;
+    output.cutoff = cutoff;
     
     return output;
 }
