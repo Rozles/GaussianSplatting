@@ -17,8 +17,13 @@ CPU: 7800X3D
 
 GPU: NVIDIA 4080 Super
 
-Slike so v mapi demo
+## Rezultati
 
+![alt text](demo/nike1.png)
+![alt text](demo/nike2.png)
+![alt text](demo/train1.png)
+![alt text](demo/train2.png)
+![alt text](demo/plush.png)
 
 
 
