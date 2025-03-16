@@ -110,7 +110,7 @@ export class CameraController {
             this.lastMouseY = this.mouseY;
         }
         
-        const sensitivity = 1 * deltaTime;
+        const sensitivity = 0.005;
         const yaw = deltaX * sensitivity;
         const pitch = deltaY * sensitivity;
         

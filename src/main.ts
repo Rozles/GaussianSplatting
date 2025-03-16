@@ -2,80 +2,14 @@ import { GaussianCloud, loadBinaryFile, loadGaussianCloud, Gaussian } from "./ut
 import { Camera, updateCamera, CameraController } from "./camera";
 import { vec3, mat4 } from "gl-matrix"; 
 import { createAxisGizmoPipeline } from "./gizmo";
+import { GUI } from "./gui";
 
 const canvas = document.getElementById("webgpu-canvas") as HTMLCanvasElement;
-
 let aspect = canvas.width / canvas.height;
-//const camera = new Camera(aspect);
+
 const camera = new CameraController(aspect);
-let cameraYaw = 0.0;
-let cameraPitch = 0.0;
-const cameraRadius = 5.0;
 
-let sortPoints = false;
-window.addEventListener("keydown", (event) => {
-  let updateCamera = false;
-  switch (event.key) {
-    case "ArrowUp":
-      cameraPitch += Math.PI / 6;
-      if (cameraPitch > Math.PI / 2) cameraPitch = Math.PI / 2;
-      updateCamera = true;
-      break;
-    case "ArrowDown":
-      cameraPitch -= Math.PI / 6;
-      if (cameraPitch < -Math.PI / 2) cameraPitch = -Math.PI / 2;
-      updateCamera = true;
-      break;
-    case "ArrowLeft":
-      cameraYaw -= Math.PI / 6;
-      updateCamera = true;
-      break;
-    case "ArrowRight":
-      cameraYaw += Math.PI / 6;
-      updateCamera = true;
-      break;
-    
-    case "x":
-      sortPoints = true;
-      break;
-  }
-
-  if (updateCamera) {
-
-    let position = vec3.fromValues(
-      cameraRadius * Math.cos(cameraPitch) * Math.sin(cameraYaw),
-      cameraRadius * Math.sin(cameraPitch),
-      cameraRadius * Math.cos(cameraPitch) * Math.cos(cameraYaw)
-    );
-    camera.setPosition(position);
-    let negativePosition = vec3.create();
-    vec3.negate(negativePosition, position);
-    camera.setForwardVec(negativePosition);
-
-    sortPoints = true;
-  }
-});
-
-
-
-
-// Overlay
-const fpsOverlay = document.getElementById("fps");
-let fpsTimer = performance.now();
-let frameCount = 0;
-
-let pointSize = 1.0;
-const sizeRangeInput = document.getElementById("size") as HTMLInputElement;
-const sizeNumberInput = document.getElementById("size-number") as HTMLInputElement;
-sizeRangeInput.addEventListener("input", () => {
-  sizeNumberInput.value = sizeRangeInput.value;
-  pointSize = parseFloat(sizeRangeInput.value);
-});
-sizeNumberInput.addEventListener("input", () => {
-  sizeRangeInput.value = sizeNumberInput.value;
-  pointSize = parseFloat(sizeNumberInput.value);
-}); 
-
+const gui = new GUI();
 
 // WebGPU initialization
 const webGPU = await initWebGPU();
@@ -84,7 +18,7 @@ if (!webGPU) {
 }
 const { device, context, presentationFormat } = webGPU;
 
-let depthTexture = null;
+//let depthTexture = null;
 
 window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
@@ -92,18 +26,6 @@ resizeCanvas();
 // Point cloud data
 const gaussianCloud = await loadBinaryFile("data/nike.splat");
 const numberOfPoints = gaussianCloud.byteLength / 32;
-
-
-function updateFPS() {
-  const currentTime = performance.now();
-  frameCount++;
-  if (currentTime - fpsTimer >= 1000) {
-    if (fpsOverlay)
-      fpsOverlay.textContent = 'FPS: ' + frameCount.toString();
-    frameCount = 0;
-    fpsTimer = currentTime;
-  }
-}
 
 function resizeCanvas() {
   const devicePixelRatio = window.devicePixelRatio || 1;
@@ -113,14 +35,14 @@ function resizeCanvas() {
 
   camera.setAspect(aspect);
 
-  if (depthTexture) {
-    depthTexture.destroy();
-  }
-  depthTexture = device.createTexture({
-    size: [canvas.width, canvas.height, 1],
-    format: "depth24plus",
-    usage: GPUTextureUsage.RENDER_ATTACHMENT,
-  });
+  // if (depthTexture) {
+  //   depthTexture.destroy();
+  // }
+  // depthTexture = device.createTexture({
+  //   size: [canvas.width, canvas.height, 1],
+  //   format: "depth24plus",
+  //   usage: GPUTextureUsage.RENDER_ATTACHMENT,
+  // });
 }
 
 async function initWebGPU() {
@@ -209,23 +131,23 @@ async function createPipeline(device: GPUDevice, presentationFormat: any) {
         format: presentationFormat,
         blend: {
           color: {
-            srcFactor: 'one',
+            srcFactor: 'src-alpha',
             dstFactor: 'one-minus-src-alpha',
             operation: 'add',
           },
           alpha: {
             srcFactor: 'one',
-            dstFactor: 'one-minus-src-alpha',
+            dstFactor: 'zero',
             operation: 'add',
           },
         },
       }],
     },
-    depthStencil: {
-      format: "depth24plus",
-      depthWriteEnabled: false,
-      depthCompare: "less",
-    },
+    // depthStencil: {
+    //   format: "depth24plus",
+    //   depthWriteEnabled: false,
+    //   depthCompare: "less",
+    // },
     primitive:{
       topology: "triangle-list",
     },
@@ -237,7 +159,7 @@ async function createPipeline(device: GPUDevice, presentationFormat: any) {
   });
 
   const uniformBuffer = device.createBuffer({
-    size: 208,
+    size: 144,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
   });
 
@@ -249,16 +171,28 @@ async function createPipeline(device: GPUDevice, presentationFormat: any) {
     }]
   });
 
-  depthTexture = device.createTexture({
-    size: [canvas.width, canvas.height, 1],
-    format: "depth24plus",
-    usage: GPUTextureUsage.RENDER_ATTACHMENT,
-  });
+  // depthTexture = device.createTexture({
+  //   size: [canvas.width, canvas.height, 1],
+  //   format: "depth24plus",
+  //   usage: GPUTextureUsage.RENDER_ATTACHMENT,
+  // });
 
   return { pipeline, vertexBuffer, uniformBuffer, bindGroup };
 }
 
+let previousPosition = vec3.create();
+
 function sortSplats(vertexBuffer: GPUBuffer) {
+  let currentPosition = camera.getPosition();
+  let deltaPosition = vec3.create();
+  vec3.sub(deltaPosition, currentPosition, previousPosition);
+
+  if (vec3.length(deltaPosition) < 0.01) {
+    return;
+  }
+
+  vec3.copy(previousPosition, currentPosition);
+
   const cameraPos = camera.getPosition();
 
   const gaussians = new Array(numberOfPoints);
@@ -269,9 +203,9 @@ function sortSplats(vertexBuffer: GPUBuffer) {
   
   for (let i = 0; i < numberOfPoints; i++) {
     const posIdx = i * floatsPerSplat;
-    const x = floatView[posIdx] - cameraPos[0];
+    const x = -floatView[posIdx] - cameraPos[0];
     const y = -floatView[posIdx + 1] - cameraPos[1];
-    const z = floatView[posIdx + 2] - cameraPos[2];
+    const z = -floatView[posIdx + 2] - cameraPos[2];
     
     gaussians[i] = {
       index: i,
@@ -299,29 +233,25 @@ function sortSplats(vertexBuffer: GPUBuffer) {
 
 async function render() {
   const { pipeline, vertexBuffer, uniformBuffer, bindGroup } = await createPipeline(device, presentationFormat);
-  const { gizmoPipeline, axisBuffer } = await createAxisGizmoPipeline(device, presentationFormat);
+  //const { gizmoPipeline, axisBuffer } = await createAxisGizmoPipeline(device, presentationFormat);
 
   device.queue.writeBuffer(vertexBuffer, 0, gaussianCloud);
 
   function frame() {
-    updateFPS();
+    gui.updateFPS();
     camera.updateCamera();
 
-    if (sortPoints) {
-      sortSplats(vertexBuffer);
-      sortPoints = false;
-    }
+    sortSplats(vertexBuffer);
 
     const commandEncoder = device.createCommandEncoder();
     const canvasTexture = context.getCurrentTexture();
     const textureView = canvasTexture.createView();
 
-    const paddedUniformBufferData = new Float32Array(52);
+    const paddedUniformBufferData = new Float32Array(36);
     paddedUniformBufferData.set(camera.getViewMatrix());
-    paddedUniformBufferData.set(camera.getViewMatrixInverse(), 16);
-    paddedUniformBufferData.set(camera.getProjectionMatrix(), 32);
-    paddedUniformBufferData.set([canvasTexture.width, canvasTexture.height], 48);
-    paddedUniformBufferData.set([pointSize, 0],  50);
+    paddedUniformBufferData.set(camera.getProjectionMatrix(), 16);
+    paddedUniformBufferData.set([canvasTexture.width, canvasTexture.height], 32);
+    paddedUniformBufferData.set([gui.getSize(), 0],  34);
 
     device.queue.writeBuffer(uniformBuffer, 0, paddedUniformBufferData.buffer);
     
@@ -332,12 +262,12 @@ async function render() {
             clearValue: [1, 1, 1, 1],
             storeOp: "store"
         }],
-        depthStencilAttachment: {
-          view: depthTexture.createView(),
-          depthLoadOp: "clear",
-          depthClearValue: 1.0,
-          depthStoreOp: "store",
-        }
+        // depthStencilAttachment: {
+        //   view: depthTexture.createView(),
+        //   depthLoadOp: "clear",
+        //   depthClearValue: 1.0,
+        //   depthStoreOp: "store",
+        // }
     });
 
     renderPass.setPipeline(pipeline);
@@ -345,11 +275,11 @@ async function render() {
     renderPass.setBindGroup(0, bindGroup);
     renderPass.draw(6, numberOfPoints, 0, 0);
 
-    // Render axis gizmo
-    renderPass.setPipeline(gizmoPipeline);
-    renderPass.setVertexBuffer(0, axisBuffer);
-    renderPass.setBindGroup(0, bindGroup); 
-    renderPass.draw(6, 1, 0, 0);
+    // // Render axis gizmo
+    // renderPass.setPipeline(gizmoPipeline);
+    // renderPass.setVertexBuffer(0, axisBuffer);
+    // renderPass.setBindGroup(0, bindGroup); 
+    // renderPass.draw(6, 1, 0, 0);
 
     renderPass.end();
 
